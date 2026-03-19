@@ -1,0 +1,2207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ground News Translator</title>
+  <style>
+    :root {
+      --bg: #0a0d14;
+      --panel: #131827;
+      --panel-soft: #1a2236;
+      --text: #eef2ff;
+      --muted: #9ca8c7;
+      --accent: #67b3ff;
+      --accent-strong: #2f8cff;
+      --border: #2a3551;
+      --danger: #ff7373;
+      --ok: #84e1aa;
+      --shadow: 0 18px 36px rgba(0, 0, 0, 0.32);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Noto Sans", "Tahoma", sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at top left, #1a2440 0%, var(--bg) 52%, #06090f 100%);
+      min-height: 100vh;
+    }
+
+    body.has-now-speaking .app {
+      margin-top: 100px;
+    }
+
+    .app {
+      width: min(980px, 94vw);
+      margin: 24px auto 48px;
+      padding: 20px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: linear-gradient(155deg, rgba(20, 26, 44, 0.9), rgba(10, 12, 20, 0.97));
+      box-shadow: var(--shadow);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(1.25rem, 3vw, 2rem);
+      letter-spacing: 0.02em;
+    }
+
+    .subtitle {
+      margin: 8px 0 0;
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 0.95rem;
+    }
+
+    .controls {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: 120px;
+      gap: 12px;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    label {
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+
+    input,
+    button {
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      font: inherit;
+    }
+
+    input {
+      width: 100%;
+      background: var(--panel-soft);
+      color: var(--text);
+      padding: 11px 12px;
+      outline: none;
+    }
+
+    input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(103, 179, 255, 0.18);
+    }
+
+    .actions {
+      margin-top: 12px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+
+    .btn {
+      background: var(--panel-soft);
+      color: var(--text);
+      padding: 10px 14px;
+      cursor: pointer;
+      transition: transform 0.08s ease, border-color 0.2s ease, background-color 0.2s ease;
+    }
+
+    .btn:hover {
+      border-color: var(--accent);
+    }
+
+    .btn:active {
+      transform: translateY(1px);
+    }
+
+    .btn-primary {
+      background: linear-gradient(140deg, var(--accent), var(--accent-strong));
+      color: #04111f;
+      border: 0;
+      font-weight: 700;
+    }
+
+    .status {
+      margin-top: 14px;
+      min-height: 20px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .status.ok {
+      color: var(--ok);
+    }
+
+    .status.error {
+      color: var(--danger);
+    }
+
+    .cards {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+
+    .card {
+      border: 1px solid var(--border);
+      background: rgba(18, 24, 40, 0.86);
+      border-radius: 14px;
+      padding: 12px;
+    }
+
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+      color: var(--muted);
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .card-head-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .lang-block {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 11px;
+      padding: 10px;
+      margin-top: 8px;
+    }
+
+    .lang-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .lang-name {
+      color: var(--muted);
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .speak-btn {
+      background: transparent;
+      color: var(--accent);
+      border: 1px solid var(--border);
+      padding: 6px 9px;
+      font-size: 0.78rem;
+      cursor: pointer;
+      border-radius: 9px;
+    }
+
+    .speak-btn:hover {
+      border-color: var(--accent);
+    }
+
+    .lang-text {
+      margin: 0;
+      line-height: 1.45;
+      word-break: break-word;
+      font-size: 1.02rem;
+    }
+
+    .lang-text.fa {
+      direction: rtl;
+      text-align: right;
+      font-family: "Noto Naskh Arabic", "Tahoma", sans-serif;
+    }
+
+    .lang-text.is-speaking,
+    .sentence-text.is-speaking,
+    #nowSpeakingText.is-speaking {
+      color: #f8fbff;
+    }
+
+    .speech-word {
+      transition: background-color 0.08s ease, color 0.08s ease;
+      border-radius: 4px;
+      padding: 0 1px;
+    }
+
+    .speech-word.active {
+      background: rgba(103, 179, 255, 0.22);
+      color: #ffffff;
+    }
+
+    .source-link {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.78rem;
+      text-transform: none;
+      letter-spacing: normal;
+    }
+
+    .source-link:hover {
+      text-decoration: underline;
+    }
+
+    .article-panel {
+      margin-top: 10px;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: rgba(11, 16, 27, 0.8);
+    }
+
+    .article-panel[hidden] {
+      display: none;
+    }
+
+    .article-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .article-status {
+      margin: 0 0 8px;
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+
+    .sentence-list {
+      display: grid;
+      gap: 8px;
+      max-height: 420px;
+      overflow: auto;
+      padding-right: 4px;
+    }
+
+    .sentence-row {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px;
+      background: var(--panel);
+    }
+
+    .sentence-row.active {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(103, 179, 255, 0.35) inset;
+    }
+
+    .sentence-row-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+
+    .sentence-index-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text);
+      cursor: pointer;
+      padding: 4px 7px;
+      border-radius: 8px;
+      font-size: 0.74rem;
+    }
+
+    .sentence-index-btn:hover {
+      border-color: var(--accent);
+    }
+
+    .sentence-lang {
+      margin: 4px 0 0;
+      font-size: 0.88rem;
+      line-height: 1.4;
+    }
+
+    .sentence-prefix {
+      color: var(--muted);
+      margin-right: 4px;
+    }
+
+    .sentence-text.fa {
+      direction: rtl;
+      text-align: right;
+      font-family: "Noto Naskh Arabic", "Tahoma", sans-serif;
+      display: inline-block;
+      width: 100%;
+    }
+
+    .sentence-lang.fa {
+      direction: rtl;
+      text-align: right;
+      font-family: "Noto Naskh Arabic", "Tahoma", sans-serif;
+    }
+
+    .now-speaking-box {
+      position: fixed;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(980px, 94vw);
+      background: rgba(8, 13, 24, 0.96);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: 0 14px 28px rgba(0, 0, 0, 0.3);
+      padding: 10px 12px;
+      z-index: 999;
+      backdrop-filter: blur(4px);
+    }
+
+    .now-speaking-box[hidden] {
+      display: none;
+    }
+
+    .now-speaking-meta {
+      color: var(--muted);
+      font-size: 0.78rem;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .now-speaking-text {
+      margin: 6px 0 0;
+      line-height: 1.45;
+      word-break: break-word;
+      font-size: 0.97rem;
+    }
+
+    @media (max-width: 680px) {
+      body.has-now-speaking .app {
+        margin-top: 118px;
+      }
+
+      .app {
+        margin-top: 14px;
+        padding: 14px;
+        border-radius: 16px;
+      }
+
+      .controls {
+        grid-template-columns: 1fr;
+      }
+
+    }
+  </style>
+</head>
+<body>
+  <aside id="nowSpeakingBox" class="now-speaking-box" hidden aria-live="polite">
+    <div id="nowSpeakingMeta" class="now-speaking-meta"></div>
+    <p id="nowSpeakingText" class="now-speaking-text"></p>
+  </aside>
+
+  <main class="app">
+    <h1>Ground News Headline Translator</h1>
+
+    <form id="controls" novalidate>
+      <div class="controls">
+        <div class="field">
+          <label for="maxItems">Count</label>
+          <input id="maxItems" type="number" min="1" max="25" value="8" required>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="fetchBtn" type="submit">Fetch + Translate</button>
+        <button class="btn" id="loadNewBtn" type="button">Load 8 New</button>
+        <button class="btn" id="readAllHeadlinesBtn" type="button">Read All Headlines</button>
+        <button class="btn" id="playAllArticlesBtn" type="button">Read All Articles</button>
+        <button class="btn" id="stopSpeechBtn" type="button">Stop Speech</button>
+      </div>
+    </form>
+
+    <p id="status" class="status" role="status" aria-live="polite"></p>
+    <section id="cards" class="cards" aria-live="polite"></section>
+  </main>
+
+  <script>
+    (() => {
+      const SOURCE_URL = "https://ground.news";
+      const MAX_ARTICLE_SENTENCES = 14;
+      const proxyCandidates = [
+        {
+          name: "AllOrigins",
+          build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
+        },
+        {
+          name: "Jina AI Reader",
+          build: (url) => `https://r.jina.ai/http://${url.replace(/^https?:\/\//i, "")}`
+        }
+      ];
+
+      const controls = document.getElementById("controls");
+      const maxItemsInput = document.getElementById("maxItems");
+      const loadNewBtn = document.getElementById("loadNewBtn");
+      const readAllHeadlinesBtn = document.getElementById("readAllHeadlinesBtn");
+      const playAllArticlesBtn = document.getElementById("playAllArticlesBtn");
+      const statusEl = document.getElementById("status");
+      const cardsEl = document.getElementById("cards");
+      const stopSpeechBtn = document.getElementById("stopSpeechBtn");
+      const nowSpeakingBox = document.getElementById("nowSpeakingBox");
+      const nowSpeakingMeta = document.getElementById("nowSpeakingMeta");
+      const nowSpeakingText = document.getElementById("nowSpeakingText");
+
+      const state = {
+        activeAudio: null,
+        activeUtterance: null,
+        voices: [],
+        translationCache: new Map(),
+        currentSpeakKey: "",
+        translatedHeadlines: [],
+        articleData: new Map(),
+        playbackToken: 0,
+        seenHeadlineKeys: new Set(),
+        playbackMode: "none",
+        headlinePlayback: {
+          active: false,
+          headlineIndex: 0,
+          langStep: 0
+        },
+        globalPlayback: {
+          active: false,
+          headlineIndex: 0,
+          sentenceIndex: 0
+        },
+        activeSpeechVisual: null,
+        isSafari: /^((?!chrome|android).)*safari/i.test(navigator.userAgent || "")
+      };
+
+      const translationEndpoint = "https://translate.googleapis.com/translate_a/single";
+      const rejectHeadlinePattern = /^(top news|top stories|daily briefing|latest .+ news|.+ blindspots?|blindspot|news|local|for you|search|subscribe|login|company|help|tools|trending topics|my news bias)$/i;
+
+      function setStatus(message, type) {
+        statusEl.textContent = message;
+        statusEl.className = "status";
+        if (type) {
+          statusEl.classList.add(type);
+        }
+      }
+
+      function hasPausedHeadlinePlayback() {
+        return state.headlinePlayback.headlineIndex > 0 || state.headlinePlayback.langStep > 0;
+      }
+
+      function hasPausedGlobalPlayback() {
+        return state.globalPlayback.headlineIndex > 0 || state.globalPlayback.sentenceIndex > 0;
+      }
+
+      function getHeadlinePauseLabel() {
+        if (!state.translatedHeadlines.length) {
+          return "Speech stopped.";
+        }
+
+        if (state.headlinePlayback.headlineIndex >= state.translatedHeadlines.length) {
+          return "Paused at end of loaded headlines.";
+        }
+
+        const steps = ["EN", "FA", "RU"];
+        const headline = Math.max(0, state.headlinePlayback.headlineIndex) + 1;
+        const step = steps[Math.min(Math.max(state.headlinePlayback.langStep, 0), steps.length - 1)];
+        return `Paused at headline ${headline}, ${step}.`;
+      }
+
+      function getGlobalPauseLabel() {
+        if (!state.translatedHeadlines.length) {
+          return "Speech stopped.";
+        }
+
+        if (state.globalPlayback.headlineIndex >= state.translatedHeadlines.length) {
+          return "Paused at end of loaded articles.";
+        }
+
+        const articleIndex = Math.max(0, state.globalPlayback.headlineIndex);
+        const record = state.articleData.get(articleIndex);
+        const maxSentence = record?.sentences?.length || 1;
+        const sentence = Math.min(Math.max(state.globalPlayback.sentenceIndex + 1, 1), maxSentence);
+        return `Paused at article ${articleIndex + 1}, sentence ${sentence}.`;
+      }
+
+      function updateLoadNewButtonLabel() {
+        if (!loadNewBtn) {
+          return;
+        }
+        loadNewBtn.textContent = `Load ${getRequestedCount()} New`;
+      }
+
+      function updateReadAllHeadlinesButtonLabel() {
+        if (!readAllHeadlinesBtn) {
+          return;
+        }
+
+        if (state.playbackMode === "headlines" && state.headlinePlayback.active) {
+          readAllHeadlinesBtn.textContent = "Reading...";
+          readAllHeadlinesBtn.disabled = true;
+          return;
+        }
+
+        readAllHeadlinesBtn.disabled = state.playbackMode === "articles";
+        readAllHeadlinesBtn.textContent = hasPausedHeadlinePlayback() ? "Resume Headlines" : "Read All Headlines";
+      }
+
+      function updatePlayAllButtonLabel() {
+        if (!playAllArticlesBtn) {
+          return;
+        }
+
+        if (state.playbackMode === "articles" && state.globalPlayback.active) {
+          playAllArticlesBtn.textContent = "Reading...";
+          playAllArticlesBtn.disabled = true;
+          return;
+        }
+
+        playAllArticlesBtn.disabled = state.playbackMode === "headlines";
+        playAllArticlesBtn.textContent = hasPausedGlobalPlayback() ? "Resume Articles" : "Read All Articles";
+      }
+
+      function updatePlaybackButtons() {
+        updatePlayAllButtonLabel();
+        updateReadAllHeadlinesButtonLabel();
+      }
+
+      function normalizeSpaces(text) {
+        return text.replace(/\s+/g, " ").trim();
+      }
+
+      function cleanHeadline(raw) {
+        if (!raw) {
+          return "";
+        }
+
+        let text = normalizeSpaces(raw)
+          .replace(/^#+\s*/g, "")
+          .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+          .replace(/!\[image[^\]]*$/gi, "")
+          .replace(/!\[[^\]]*$/g, "")
+          .replace(/\b\d+\s*stories?\s*[•|]\s*\d+\s*articles?\s*[•|]\s*\d+\s*m\s*read\b/gi, "")
+          .replace(/\b\d+\s*stories?\b/gi, "")
+          .replace(/\b\d+\s*articles?\b/gi, "")
+          .replace(/\b\d+\s*m\s*read\b/gi, "")
+          .replace(/[•|]/g, " ")
+          .replace(/\s+coverage:\s*\d+\s+sources?/gi, "")
+          .replace(/\b(left|center|right)\s*\d+%/gi, "")
+          .replace(/\b\d+%\s*(left|center|right)\b/gi, "")
+          .replace(/\b[LR]\s*\d+%\b/g, "")
+          .replace(/\s*REUTERS\s*\/.*$/i, "")
+          .replace(/\s*—\s*REUTERS\s*\/.*$/i, "")
+          .replace(/\s+!\[[^\]]*$/g, "")
+          .replace(/^\W+|\W+$/g, "");
+
+        const repeatedSegment = text.match(/^(.{24,140}?)\s+\1$/i);
+        if (repeatedSegment) {
+          text = repeatedSegment[1];
+        }
+
+        text = normalizeSpaces(text);
+
+        if (!text || text.length < 28 || text.length > 220) {
+          return "";
+        }
+
+        if (/stories?\s+articles?\s+m\s+read/i.test(text) || /\[image/i.test(text)) {
+          return "";
+        }
+
+        if (rejectHeadlinePattern.test(text)) {
+          return "";
+        }
+
+        return text;
+      }
+
+      function canonicalKey(headline) {
+        return headline.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "").trim();
+      }
+
+      function normalizeGroundLink(href) {
+        if (!href) {
+          return "";
+        }
+        if (/^https?:\/\//i.test(href)) {
+          return href;
+        }
+        if (href.startsWith("/")) {
+          return `https://ground.news${href}`;
+        }
+        return `https://ground.news/${href.replace(/^\/+/, "")}`;
+      }
+
+      function isGroundArticleLink(link) {
+        return Boolean(link && /^https?:\/\/ground\.news\/article\//i.test(link));
+      }
+
+      function extractHeadlineLinksFromMarkdown(markdown) {
+        const linksByHeadlineKey = new Map();
+        const linkPattern = /\[([^\]]+)\]\((https?:\/\/[^)]+|\/[^)]+)\)/g;
+        let match;
+
+        while ((match = linkPattern.exec(markdown)) !== null) {
+          const rawLabel = normalizeSpaces(match[1] || "");
+          const link = normalizeGroundLink(match[2] || "");
+          if (!rawLabel || !link || !/\/article\//i.test(link)) {
+            continue;
+          }
+
+          const label = rawLabel.replace(/^#{1,6}\s+/, "");
+          const cleanLabel = cleanHeadline(label);
+          if (!cleanLabel) {
+            continue;
+          }
+
+          const key = canonicalKey(cleanLabel);
+          if (!key) {
+            continue;
+          }
+
+          if (!linksByHeadlineKey.has(key) || /\/article\//i.test(link)) {
+            linksByHeadlineKey.set(key, link);
+          }
+        }
+
+        return linksByHeadlineKey;
+      }
+
+      function extractHeadlinesFromHtml(html, maxItems) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+
+        const candidates = [
+          ...doc.querySelectorAll("h4[title], h2[title], h4, h2, h3")
+        ];
+
+        const seen = new Set();
+        const headlines = [];
+        const linksByHeadlineKey = new Map();
+        const orderedArticleLinks = [];
+        const seenOrderedLinks = new Set();
+        let fallbackLinkIndex = 0;
+
+        for (const anchor of doc.querySelectorAll("a[href]")) {
+          const link = normalizeGroundLink(anchor.getAttribute("href"));
+          if (!link) {
+            continue;
+          }
+
+          if (isGroundArticleLink(link) && !seenOrderedLinks.has(link)) {
+            seenOrderedLinks.add(link);
+            orderedArticleLinks.push(link);
+          }
+
+          const rawCandidates = [
+            anchor.getAttribute("title") || "",
+            anchor.getAttribute("aria-label") || "",
+            anchor.textContent || "",
+            ...Array.from(anchor.querySelectorAll("img[alt]"), (img) => img.getAttribute("alt") || "")
+          ];
+
+          for (const rawCandidate of rawCandidates) {
+            const cleanAnchorHeadline = cleanHeadline(rawCandidate);
+            if (!cleanAnchorHeadline) {
+              continue;
+            }
+            const key = canonicalKey(cleanAnchorHeadline);
+            if (!key) {
+              continue;
+            }
+            if (!isGroundArticleLink(link)) {
+              continue;
+            }
+            if (!linksByHeadlineKey.has(key) || /\/article\//i.test(link)) {
+              linksByHeadlineKey.set(key, link);
+            }
+          }
+        }
+
+        for (const node of candidates) {
+          const raw = node.getAttribute("title") || node.textContent || "";
+          const headline = cleanHeadline(raw);
+          if (!headline) {
+            continue;
+          }
+
+          const key = canonicalKey(headline);
+          if (!key || seen.has(key)) {
+            continue;
+          }
+
+          const anchor = node.closest("a[href]") || node.querySelector("a[href]");
+          const anchorLink = normalizeGroundLink(anchor?.getAttribute("href"));
+          let sourceLink =
+            (isGroundArticleLink(anchorLink) ? anchorLink : "") ||
+            linksByHeadlineKey.get(key) ||
+            "";
+          if (!sourceLink && fallbackLinkIndex < orderedArticleLinks.length) {
+            sourceLink = orderedArticleLinks[fallbackLinkIndex];
+            fallbackLinkIndex += 1;
+          }
+
+          seen.add(key);
+          headlines.push({
+            title: headline,
+            link: sourceLink
+          });
+
+          if (headlines.length >= maxItems) {
+            break;
+          }
+        }
+
+        return headlines;
+      }
+
+      function extractHeadlinesFromMarkdown(markdown, maxItems) {
+        const lines = markdown.split(/\r?\n/);
+        const seen = new Set();
+        const headlines = [];
+        const linksByHeadlineKey = extractHeadlineLinksFromMarkdown(markdown);
+
+        for (const line of lines) {
+          const headingMatch = line.match(/^#{2,4}\s+(.+)/);
+          if (!headingMatch) {
+            continue;
+          }
+
+          let raw = headingMatch[1];
+          let sourceLink = "";
+
+          const markdownLinkMatch = raw.match(/\[([^\]]+)\]\((https?:\/\/[^)]+|\/[^)]+)\)/);
+          if (markdownLinkMatch) {
+            raw = markdownLinkMatch[1];
+            sourceLink = normalizeGroundLink(markdownLinkMatch[2]);
+            if (!isGroundArticleLink(sourceLink)) {
+              sourceLink = "";
+            }
+          }
+
+          raw = raw.replace(/!\[[^\]]*\]\([^)]*\)/g, "");
+          const headline = cleanHeadline(raw);
+          if (!headline) {
+            continue;
+          }
+
+          const key = canonicalKey(headline);
+          if (!key || seen.has(key)) {
+            continue;
+          }
+
+          sourceLink = sourceLink || linksByHeadlineKey.get(key) || "";
+
+          seen.add(key);
+          headlines.push({
+            title: headline,
+            link: sourceLink
+          });
+
+          if (headlines.length >= maxItems) {
+            break;
+          }
+        }
+
+        return headlines;
+      }
+
+      async function fetchText(url, options = {}) {
+        const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 20000;
+        const retries = Number.isFinite(options.retries) ? options.retries : 1;
+
+        let lastError = null;
+        for (let attempt = 0; attempt <= retries; attempt += 1) {
+          const controller = new AbortController();
+          const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+
+          try {
+            const response = await fetch(url, {
+              signal: controller.signal,
+              cache: "no-store"
+            });
+
+            if (!response.ok) {
+              throw new Error(`HTTP ${response.status}`);
+            }
+
+            return response.text();
+          } catch (error) {
+            lastError = error;
+            const isAbort = error?.name === "AbortError" || /aborted/i.test(error?.message || "");
+            if (!isAbort || attempt >= retries) {
+              break;
+            }
+          } finally {
+            window.clearTimeout(timeoutId);
+          }
+        }
+
+        if (lastError?.name === "AbortError" || /aborted/i.test(lastError?.message || "")) {
+          throw new Error("Request timed out");
+        }
+        throw lastError || new Error("Request failed");
+      }
+
+      async function fetchHeadlines(sourceUrl, maxItems) {
+        const tasks = proxyCandidates.map(async (proxy) => {
+          const body = await fetchText(proxy.build(sourceUrl), { timeoutMs: 20000, retries: 1 });
+          const fromHtml = extractHeadlinesFromHtml(body, maxItems);
+          const headlines = fromHtml.length ? fromHtml : extractHeadlinesFromMarkdown(body, maxItems);
+
+          if (!headlines.length) {
+            throw new Error(`${proxy.name}: no headlines found`);
+          }
+
+          const linkCount = headlines.reduce((count, headline) => (headline.link ? count + 1 : count), 0);
+          return { headlines, proxy: proxy.name, linkCount };
+        });
+
+        const settled = await Promise.allSettled(tasks);
+        const successful = settled
+          .filter((result) => result.status === "fulfilled")
+          .map((result) => result.value);
+
+        if (successful.length) {
+          successful.sort((a, b) => {
+            if (b.linkCount !== a.linkCount) {
+              return b.linkCount - a.linkCount;
+            }
+            return b.headlines.length - a.headlines.length;
+          });
+          return successful[0];
+        }
+
+        const failures = settled
+          .filter((result) => result.status === "rejected")
+          .map((result) => result.reason?.message || String(result.reason));
+
+        throw new Error(failures.join(" | "));
+      }
+
+      async function translateText(text, targetLanguage) {
+        if (targetLanguage === "en") {
+          return text;
+        }
+
+        const cacheKey = `${targetLanguage}::${text}`;
+        const cached = state.translationCache.get(cacheKey);
+        if (cached) {
+          return cached;
+        }
+
+        const request = (async () => {
+          const url = `${translationEndpoint}?client=gtx&sl=en&tl=${encodeURIComponent(targetLanguage)}&dt=t&q=${encodeURIComponent(text)}`;
+          const response = await fetch(url, { cache: "no-store" });
+
+          if (!response.ok) {
+            throw new Error(`Translate HTTP ${response.status}`);
+          }
+
+          const payload = await response.json();
+          const translated = Array.isArray(payload?.[0])
+            ? payload[0].map((chunk) => chunk?.[0] || "").join("")
+            : "";
+
+          return normalizeSpaces(translated) || text;
+        })();
+
+        state.translationCache.set(cacheKey, request);
+        try {
+          return await request;
+        } catch (error) {
+          state.translationCache.delete(cacheKey);
+          throw error;
+        }
+      }
+
+      function sanitizeArticleText(text) {
+        return normalizeSpaces(
+          String(text || "")
+            .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/gi, "$1")
+            .replace(/https?:\/\/\S+/gi, "")
+            .replace(/\bImage\s+\d+\s*:\s*/gi, "")
+            .replace(/\]\(http[^\s)]*/gi, "")
+            .replace(/\s+\|\s+/g, " ")
+        );
+      }
+
+      function isArticleNoise(text) {
+        if (!text) {
+          return true;
+        }
+
+        if (text.length < 18) {
+          return true;
+        }
+
+        const noisePatterns = [
+          /^opens?\s+in\s+a\s+new\s+window/i,
+          /opens?\s+an?\s+external\s+website/i,
+          /this website utilizes technologies such as cookies/i,
+          /privacy policy/i,
+          /cookie(s)?/i,
+          /targeted advertising/i,
+          /^feed icon/i,
+          /^image\s+\d+/i,
+          /^subscribe|^sign up|^log in|^accept all/i
+        ];
+
+        return noisePatterns.some((pattern) => pattern.test(text));
+      }
+
+      function splitIntoSentences(text) {
+        const cleaned = sanitizeArticleText(text);
+        if (!cleaned) {
+          return [];
+        }
+
+        if (typeof Intl !== "undefined" && typeof Intl.Segmenter === "function") {
+          try {
+            const segmenter = new Intl.Segmenter("en", { granularity: "sentence" });
+            const segments = Array.from(segmenter.segment(cleaned), (part) => normalizeSpaces(part.segment));
+            return segments
+              .map((segment) => sanitizeArticleText(segment))
+              .filter((segment) => segment.length >= 12 && !isArticleNoise(segment));
+          } catch (error) {
+            console.warn("Intl.Segmenter sentence split failed:", error);
+          }
+        }
+
+        return cleaned
+          .split(/(?<=[.!?؟])\s+/)
+          .map((segment) => sanitizeArticleText(segment))
+          .filter((segment) => segment.length >= 12 && !isArticleNoise(segment));
+      }
+
+      function extractArticleParagraphsFromHtml(html) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+        const paragraphNodes = doc.querySelectorAll("article p, main p, p");
+
+        const paragraphs = [];
+        for (const node of paragraphNodes) {
+          if (node.closest("header, nav, footer, aside, form, button, [role='dialog'], [class*='cookie' i], [id*='cookie' i], [class*='consent' i], [id*='consent' i]")) {
+            continue;
+          }
+
+          const text = sanitizeArticleText(node.textContent || "");
+          if (!text || text.length < 50) {
+            continue;
+          }
+          if (/^copyright|^sign up|^subscribe|^read more/i.test(text) || isArticleNoise(text)) {
+            continue;
+          }
+          paragraphs.push(text);
+          if (paragraphs.length >= 24) {
+            break;
+          }
+        }
+
+        return paragraphs;
+      }
+
+      function extractArticleParagraphsFromMarkdown(markdown) {
+        const lines = markdown.split(/\r?\n/);
+        const paragraphs = [];
+
+        for (const line of lines) {
+          const text = sanitizeArticleText(line);
+          if (!text || text.length < 50) {
+            continue;
+          }
+          if (/^#{1,6}\s/.test(text)) {
+            continue;
+          }
+          if (/^\[.*\]\(https?:\/\/.*\)$/.test(text)) {
+            continue;
+          }
+          if (/^title:|^url source:|^markdown content:/i.test(text)) {
+            continue;
+          }
+          if (/^\*+$/.test(text)) {
+            continue;
+          }
+          if (isArticleNoise(text)) {
+            continue;
+          }
+          paragraphs.push(text);
+          if (paragraphs.length >= 24) {
+            break;
+          }
+        }
+
+        return paragraphs;
+      }
+
+      async function fetchArticleSentences(sourceUrl) {
+        const articleProxyCandidates = [
+          {
+            name: "Jina AI Reader",
+            build: (url) => `https://r.jina.ai/http://${url.replace(/^https?:\/\//i, "")}`,
+            parse: extractArticleParagraphsFromMarkdown
+          },
+          {
+            name: "AllOrigins",
+            build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+            parse: extractArticleParagraphsFromHtml
+          }
+        ];
+
+        const tasks = articleProxyCandidates.map(async (proxy) => {
+          const body = await fetchText(proxy.build(sourceUrl), { timeoutMs: 45000, retries: 1 });
+          const paragraphs = proxy.parse(body);
+          if (!paragraphs.length) {
+            throw new Error(`${proxy.name}: no article paragraphs`);
+          }
+
+          const sentenceBucket = [];
+          for (const paragraph of paragraphs) {
+            for (const sentence of splitIntoSentences(paragraph)) {
+              sentenceBucket.push(sentence);
+              if (sentenceBucket.length >= MAX_ARTICLE_SENTENCES) {
+                return { sentences: sentenceBucket, proxy: proxy.name };
+              }
+            }
+          }
+
+          if (!sentenceBucket.length) {
+            throw new Error(`${proxy.name}: no article sentences`);
+          }
+
+          return { sentences: sentenceBucket, proxy: proxy.name };
+        });
+
+        if (typeof Promise.any === "function") {
+          try {
+            return await Promise.any(tasks);
+          } catch (aggregateError) {
+            const reasons = Array.isArray(aggregateError.errors)
+              ? aggregateError.errors.map((err) => err?.message || String(err))
+              : [aggregateError.message];
+            throw new Error(reasons.join(" | "));
+          }
+        }
+
+        const failures = [];
+        for (const task of tasks) {
+          try {
+            return await task;
+          } catch (error) {
+            failures.push(error.message);
+          }
+        }
+
+        throw new Error(failures.join(" | "));
+      }
+
+      function escapeHtml(text) {
+        return text
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function normalizeSpeechTargets(targets = []) {
+        return Array.isArray(targets)
+          ? targets
+            .filter((target) => target && target.id)
+            .map((target) => ({
+              id: String(target.id),
+              text: normalizeSpaces(String(target.text || ""))
+            }))
+          : [];
+      }
+
+      function getActiveWordIndex(text, charIndex) {
+        if (!Number.isFinite(charIndex) || charIndex < 0) {
+          return -1;
+        }
+
+        const wordPattern = /\S+/gu;
+        let match;
+        let index = 0;
+        while ((match = wordPattern.exec(text)) !== null) {
+          const start = match.index;
+          const end = start + match[0].length;
+          if (charIndex >= start && charIndex < end) {
+            return index;
+          }
+          index += 1;
+        }
+
+        return -1;
+      }
+
+      function buildHighlightedTextHtml(text, charIndex) {
+        const cleanText = normalizeSpaces(text);
+        if (!cleanText) {
+          return "";
+        }
+
+        const activeWordIndex = getActiveWordIndex(cleanText, charIndex);
+        const wordPattern = /\S+/gu;
+        let match;
+        let html = "";
+        let lastIndex = 0;
+        let index = 0;
+
+        while ((match = wordPattern.exec(cleanText)) !== null) {
+          html += escapeHtml(cleanText.slice(lastIndex, match.index));
+          const wordClass = index === activeWordIndex ? "speech-word active" : "speech-word";
+          html += `<span class="${wordClass}">${escapeHtml(match[0])}</span>`;
+          lastIndex = match.index + match[0].length;
+          index += 1;
+        }
+
+        html += escapeHtml(cleanText.slice(lastIndex));
+        return html;
+      }
+
+      function setNowSpeaking(trackerLabel, text, charIndex) {
+        const cleanText = normalizeSpaces(text || "");
+        if (!cleanText) {
+          return;
+        }
+
+        nowSpeakingMeta.textContent = trackerLabel || "Now Speaking";
+        nowSpeakingText.classList.add("is-speaking");
+        nowSpeakingText.innerHTML = buildHighlightedTextHtml(cleanText, charIndex);
+        nowSpeakingBox.hidden = false;
+        document.body.classList.add("has-now-speaking");
+      }
+
+      function clearNowSpeaking() {
+        nowSpeakingText.classList.remove("is-speaking");
+        nowSpeakingText.textContent = "";
+        nowSpeakingMeta.textContent = "";
+        nowSpeakingBox.hidden = true;
+        document.body.classList.remove("has-now-speaking");
+      }
+
+      function applySpeechHighlight(targets, text, charIndex, trackerLabel) {
+        const cleanText = normalizeSpaces(text || "");
+        if (!cleanText) {
+          return;
+        }
+
+        const normalizedTargets = normalizeSpeechTargets(targets);
+        for (const target of normalizedTargets) {
+          const node = document.getElementById(target.id);
+          if (!node) {
+            continue;
+          }
+          node.classList.add("is-speaking");
+          node.innerHTML = buildHighlightedTextHtml(target.text || cleanText, charIndex);
+        }
+
+        setNowSpeaking(trackerLabel, cleanText, charIndex);
+        state.activeSpeechVisual = {
+          targets: normalizedTargets,
+          trackerLabel: trackerLabel || "Now Speaking",
+          text: cleanText
+        };
+      }
+
+      function clearSpeechVisuals() {
+        const active = state.activeSpeechVisual;
+        if (active?.targets?.length) {
+          for (const target of active.targets) {
+            const node = document.getElementById(target.id);
+            if (!node) {
+              continue;
+            }
+            node.classList.remove("is-speaking");
+            node.textContent = target.text || "";
+          }
+        }
+
+        state.activeSpeechVisual = null;
+        clearNowSpeaking();
+      }
+
+      function stopAudioPlayback() {
+        if (state.activeAudio) {
+          state.activeAudio.pause();
+          state.activeAudio.currentTime = 0;
+          state.activeAudio = null;
+        }
+      }
+
+      function stopSpeechSynthesis() {
+        if (window.speechSynthesis) {
+          window.speechSynthesis.cancel();
+        }
+        state.activeUtterance = null;
+      }
+
+      function stopAllSpeech() {
+        stopAudioPlayback();
+        stopSpeechSynthesis();
+        clearSpeechVisuals();
+      }
+
+      function findVoiceForLang(languageCode) {
+        const code = languageCode.toLowerCase();
+        const exact = state.voices.find((voice) => voice.lang?.toLowerCase() === code);
+        if (exact) {
+          return exact;
+        }
+
+        const prefix = code.split("-")[0];
+        const byPrefix = state.voices.find((voice) => voice.lang?.toLowerCase().startsWith(prefix));
+        if (byPrefix) {
+          return byPrefix;
+        }
+
+        if (prefix === "fa" || prefix === "prs") {
+          return state.voices.find((voice) => {
+            const lang = voice.lang?.toLowerCase() || "";
+            const name = voice.name?.toLowerCase() || "";
+            return (
+              lang.startsWith("fa") ||
+              lang.startsWith("prs") ||
+              /farsi|persian|dari|afghan|فارسی|پارسی|دری/.test(name)
+            );
+          });
+        }
+
+        return null;
+      }
+
+      function findBestVoiceForLang(languageCode) {
+        const code = languageCode.toLowerCase();
+        const prefix = code.split("-")[0];
+
+        const candidates = state.voices.filter((voice) => {
+          const lang = voice.lang?.toLowerCase() || "";
+          if (!lang) {
+            return false;
+          }
+          return lang === code || lang.startsWith(prefix);
+        });
+
+        if (!candidates.length) {
+          return null;
+        }
+
+        return (
+          candidates.find((voice) => voice.default && voice.localService) ||
+          candidates.find((voice) => voice.localService) ||
+          candidates.find((voice) => voice.default) ||
+          candidates[0]
+        );
+      }
+
+      function findPreferredVoiceForLang(languageCode) {
+        const code = languageCode.toLowerCase();
+        const prefix = code.split("-")[0];
+        const candidates = state.voices.filter((voice) => {
+          const lang = voice.lang?.toLowerCase() || "";
+          return lang === code || lang.startsWith(prefix);
+        });
+
+        if (!candidates.length) {
+          return null;
+        }
+
+        const weightedMatchers = {
+          ru: [
+            /\byuri\b/i,
+            /ru-ru.*yuri|yuri.*ru-ru/i,
+            /com\.apple\..*yuri/i,
+            /microsoft\s+irina/i,
+            /enhanced/i,
+            /russian/i,
+            /рус/i
+          ],
+          en: [
+            /\bjamie\b/i,
+            /premium/i,
+            /com\.apple\..*jamie/i,
+            /alex|samantha|ava|allison|daniel|karen|moira|victoria|enhanced/i
+          ],
+          fa: [
+            /farsi|persian|dari|afghan|فارسی|پارسی|دری/i
+          ]
+        };
+
+        const matchers = weightedMatchers[prefix] || [];
+        for (const matcher of matchers) {
+          const matched = candidates.find((voice) => {
+            const label = `${voice.name || ""} ${voice.voiceURI || ""}`.toLowerCase();
+            return matcher.test(label);
+          });
+          if (matched) {
+            return matched;
+          }
+        }
+
+        return (
+          candidates.find((voice) => voice.default && voice.localService) ||
+          candidates.find((voice) => voice.localService) ||
+          candidates.find((voice) => voice.default) ||
+          candidates[0]
+        );
+      }
+
+      function hasVoiceForLang(languageCode) {
+        return Boolean(findVoiceForLang(languageCode));
+      }
+
+      async function refreshVoices() {
+        if (!window.speechSynthesis) {
+          return;
+        }
+
+        let voices = window.speechSynthesis.getVoices();
+        if (voices.length) {
+          state.voices = voices;
+          return;
+        }
+
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 120));
+          voices = window.speechSynthesis.getVoices();
+          if (voices.length) {
+            state.voices = voices;
+            return;
+          }
+        }
+      }
+
+      async function speakWithSpeechSynthesis(text, lang, options = {}) {
+        if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
+          throw new Error("Speech synthesis is unavailable");
+        }
+
+        const {
+          forceMatchedVoice = false,
+          awaitEnd = false,
+          highlightTargets = [],
+          trackerLabel = ""
+        } = options;
+
+        await new Promise((resolve, reject) => {
+          const spokenText = normalizeSpaces(text || "");
+          const visualTargets = normalizeSpeechTargets(highlightTargets);
+          const utterance = new SpeechSynthesisUtterance(spokenText);
+          utterance.lang = lang;
+
+          const preferredVoice = state.isSafari
+            ? (findBestVoiceForLang(lang) || findVoiceForLang(lang) || findPreferredVoiceForLang(lang))
+            : (forceMatchedVoice
+              ? (findPreferredVoiceForLang(lang) || findBestVoiceForLang(lang) || findVoiceForLang(lang))
+              : (findPreferredVoiceForLang(lang) || findBestVoiceForLang(lang)));
+          if (preferredVoice && (forceMatchedVoice || preferredVoice.localService || state.isSafari)) {
+            utterance.voice = preferredVoice;
+            if (preferredVoice.lang) {
+              utterance.lang = preferredVoice.lang;
+            }
+            console.debug("Selected speech voice:", {
+              requestedLang: lang,
+              name: preferredVoice.name,
+              voiceURI: preferredVoice.voiceURI,
+              lang: preferredVoice.lang,
+              localService: preferredVoice.localService,
+              default: preferredVoice.default
+            });
+          }
+
+          let started = false;
+          let resolved = false;
+
+          const finish = (cb, payload) => {
+            if (resolved) {
+              return;
+            }
+            resolved = true;
+            cb(payload);
+          };
+
+          const timeoutId = window.setTimeout(() => {
+            if (!started) {
+              window.speechSynthesis.cancel();
+              finish(reject, new Error("Speech synthesis did not start"));
+            }
+          }, 4000);
+
+          utterance.onstart = () => {
+            started = true;
+            applySpeechHighlight(visualTargets, spokenText, 0, trackerLabel);
+            if (!awaitEnd) {
+              window.clearTimeout(timeoutId);
+              finish(resolve);
+            }
+          };
+
+          utterance.onboundary = (event) => {
+            if (!started) {
+              return;
+            }
+            if (!Number.isFinite(event.charIndex)) {
+              return;
+            }
+            applySpeechHighlight(visualTargets, spokenText, event.charIndex, trackerLabel);
+          };
+
+          utterance.onend = () => {
+            window.clearTimeout(timeoutId);
+            clearSpeechVisuals();
+            finish(resolve);
+          };
+
+          utterance.onerror = (event) => {
+            window.clearTimeout(timeoutId);
+            clearSpeechVisuals();
+            finish(reject, new Error(event.error || "Speech synthesis error"));
+          };
+
+          state.activeUtterance = utterance;
+          if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+            window.speechSynthesis.cancel();
+          }
+          window.speechSynthesis.speak(utterance);
+          if (window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+          }
+        });
+      }
+
+      async function speakWithPreferredLangs(text, languageCodes, options = {}) {
+        const available = languageCodes.find((code) => hasVoiceForLang(code));
+        if (!available) {
+          throw new Error("No Dari/Persian voice found on this device/browser.");
+        }
+
+        await speakWithSpeechSynthesis(text, available, {
+          forceMatchedVoice: true,
+          awaitEnd: Boolean(options.awaitEnd),
+          highlightTargets: options.highlightTargets || [],
+          trackerLabel: options.trackerLabel || ""
+        });
+      }
+
+      async function speakText(text, langTag, options = {}) {
+        const lang = langTag.toLowerCase();
+        const baseLang = lang.split("-")[0];
+
+        if (!text) {
+          return;
+        }
+
+        await refreshVoices();
+        stopAllSpeech();
+
+        if (baseLang === "fa") {
+          await speakWithPreferredLangs(text, ["fa-AF", "prs-AF", "prs", "fa-IR", "fa"], {
+            awaitEnd: true,
+            highlightTargets: options.highlightTargets || [],
+            trackerLabel: options.trackerLabel || "Farsi"
+          });
+          return;
+        }
+
+        try {
+          await speakWithSpeechSynthesis(text, lang, {
+            forceMatchedVoice: true,
+            awaitEnd: true,
+            highlightTargets: options.highlightTargets || [],
+            trackerLabel: options.trackerLabel || lang.toUpperCase()
+          });
+          return;
+        } catch (error) {
+          console.warn("SpeechSynthesis failed:", error);
+        }
+        throw new Error(`No usable system voice for ${baseLang}.`);
+      }
+
+      function getArticleRecord(headlineIndex) {
+        if (!state.articleData.has(headlineIndex)) {
+          state.articleData.set(headlineIndex, {
+            loading: false,
+            loaded: false,
+            sentences: [],
+            currentSentenceIndex: 0,
+            playing: false,
+            status: "Not loaded."
+          });
+        }
+        return state.articleData.get(headlineIndex);
+      }
+
+      function setArticleStatus(headlineIndex, message) {
+        const statusNode = document.getElementById(`article-status-${headlineIndex}`);
+        if (statusNode) {
+          statusNode.textContent = message;
+        }
+        const record = getArticleRecord(headlineIndex);
+        record.status = message;
+      }
+
+      function renderSentenceList(headlineIndex) {
+        const record = getArticleRecord(headlineIndex);
+        const listNode = document.getElementById(`sentence-list-${headlineIndex}`);
+        if (!listNode) {
+          return;
+        }
+        if (!record.sentences.length) {
+          listNode.innerHTML = "";
+          return;
+        }
+
+        listNode.innerHTML = record.sentences.map((sentence, sentenceIndex) => {
+          const activeClass = sentenceIndex === record.currentSentenceIndex ? "active" : "";
+          return `
+            <article class="sentence-row ${activeClass}" data-sentence-index="${sentenceIndex}">
+              <div class="sentence-row-head">
+                <button class="sentence-index-btn" type="button" data-action="select-sentence" data-headline-index="${headlineIndex}" data-sentence-index="${sentenceIndex}">Sentence ${sentenceIndex + 1}</button>
+                <button class="sentence-index-btn" type="button" data-action="play-sentence-trio" data-headline-index="${headlineIndex}" data-sentence-index="${sentenceIndex}">Play EN→FA→RU</button>
+              </div>
+              <p class="sentence-lang"><span class="sentence-prefix">EN:</span><span class="sentence-text" id="sentence-text-${headlineIndex}-${sentenceIndex}-en">${escapeHtml(sentence.en)}</span></p>
+              <p class="sentence-lang fa"><span class="sentence-prefix">FA:</span><span class="sentence-text fa" id="sentence-text-${headlineIndex}-${sentenceIndex}-fa">${escapeHtml(sentence.fa)}</span></p>
+              <p class="sentence-lang"><span class="sentence-prefix">RU:</span><span class="sentence-text" id="sentence-text-${headlineIndex}-${sentenceIndex}-ru">${escapeHtml(sentence.ru)}</span></p>
+            </article>
+          `;
+        }).join("");
+      }
+
+      async function loadArticleTranslations(headlineIndex) {
+        const headline = state.translatedHeadlines[headlineIndex];
+        if (!headline || !headline.source) {
+          throw new Error("No Ground News source link for this headline.");
+        }
+
+        const record = getArticleRecord(headlineIndex);
+        if (record.loading) {
+          return;
+        }
+        if (record.loaded && record.sentences.length) {
+          return;
+        }
+
+        record.loading = true;
+        setArticleStatus(headlineIndex, "Loading article text...");
+
+        try {
+          const { sentences, proxy } = await fetchArticleSentences(headline.source);
+          setArticleStatus(headlineIndex, `Loaded ${sentences.length} sentences via ${proxy}. Translating...`);
+
+          const [faSentences, ruSentences] = await Promise.all([
+            Promise.all(sentences.map((sentence) => translateText(sentence, "fa"))),
+            Promise.all(sentences.map((sentence) => translateText(sentence, "ru")))
+          ]);
+
+          record.sentences = sentences.map((sentence, sentenceIndex) => ({
+            en: sentence,
+            fa: faSentences[sentenceIndex],
+            ru: ruSentences[sentenceIndex]
+          }));
+          record.currentSentenceIndex = 0;
+          record.loaded = true;
+          setArticleStatus(headlineIndex, `Ready: ${record.sentences.length} translated sentences.`);
+          renderSentenceList(headlineIndex);
+        } finally {
+          record.loading = false;
+        }
+      }
+
+      function stopArticlePlayback() {
+        state.playbackToken += 1;
+        state.playbackMode = "none";
+        state.headlinePlayback.active = false;
+        state.globalPlayback.active = false;
+        for (const [, record] of state.articleData) {
+          record.playing = false;
+        }
+        stopAllSpeech();
+        updatePlaybackButtons();
+      }
+
+      function setHeadlinePlaybackCursor(headlineIndex, langStep) {
+        state.headlinePlayback.headlineIndex = Math.max(0, headlineIndex);
+        state.headlinePlayback.langStep = Math.max(0, langStep);
+      }
+
+      function setGlobalPlaybackCursor(headlineIndex, sentenceIndex) {
+        state.globalPlayback.headlineIndex = Math.max(0, headlineIndex);
+        state.globalPlayback.sentenceIndex = Math.max(0, sentenceIndex);
+      }
+
+      async function speakSentenceTrio(headlineIndex, sentenceIndex) {
+        const record = getArticleRecord(headlineIndex);
+        if (!record.loaded || !record.sentences[sentenceIndex]) {
+          throw new Error("Load article translations first.");
+        }
+
+        await refreshVoices();
+        record.currentSentenceIndex = sentenceIndex;
+        renderSentenceList(headlineIndex);
+
+        const sentence = record.sentences[sentenceIndex];
+        await speakWithSpeechSynthesis(sentence.en, "en-US", {
+          forceMatchedVoice: true,
+          awaitEnd: true,
+          highlightTargets: [{ id: `sentence-text-${headlineIndex}-${sentenceIndex}-en`, text: sentence.en }],
+          trackerLabel: `Article ${headlineIndex + 1} Sentence ${sentenceIndex + 1} EN`
+        });
+        await speakWithPreferredLangs(sentence.fa, ["fa-AF", "prs-AF", "prs", "fa-IR", "fa"], {
+          awaitEnd: true,
+          highlightTargets: [{ id: `sentence-text-${headlineIndex}-${sentenceIndex}-fa`, text: sentence.fa }],
+          trackerLabel: `Article ${headlineIndex + 1} Sentence ${sentenceIndex + 1} FA`
+        });
+        await speakWithSpeechSynthesis(sentence.ru, "ru-RU", {
+          forceMatchedVoice: true,
+          awaitEnd: true,
+          highlightTargets: [{ id: `sentence-text-${headlineIndex}-${sentenceIndex}-ru`, text: sentence.ru }],
+          trackerLabel: `Article ${headlineIndex + 1} Sentence ${sentenceIndex + 1} RU`
+        });
+      }
+
+      async function playAllSentences(headlineIndex) {
+        const record = getArticleRecord(headlineIndex);
+        if (!record.loaded || !record.sentences.length) {
+          throw new Error("Load article translations first.");
+        }
+
+        stopArticlePlayback();
+        const token = state.playbackToken;
+        record.playing = true;
+
+        try {
+          for (let i = record.currentSentenceIndex; i < record.sentences.length; i += 1) {
+            if (token !== state.playbackToken) {
+              break;
+            }
+            record.currentSentenceIndex = i;
+            renderSentenceList(headlineIndex);
+            try {
+              await speakSentenceTrio(headlineIndex, i);
+            } catch (error) {
+              if (token !== state.playbackToken) {
+                break;
+              }
+              throw error;
+            }
+          }
+        } finally {
+          if (token === state.playbackToken) {
+            record.playing = false;
+          }
+        }
+      }
+
+      async function playAllHeadlines() {
+        if (!state.translatedHeadlines.length) {
+          throw new Error("No headlines loaded.");
+        }
+
+        if (state.headlinePlayback.headlineIndex >= state.translatedHeadlines.length) {
+          resetHeadlinePlaybackPosition();
+        }
+
+        stopArticlePlayback();
+        const token = state.playbackToken;
+        state.playbackMode = "headlines";
+        state.headlinePlayback.active = true;
+        updatePlaybackButtons();
+        let finishedAll = true;
+
+        try {
+          for (let h = state.headlinePlayback.headlineIndex; h < state.translatedHeadlines.length; h += 1) {
+            if (token !== state.playbackToken) {
+              finishedAll = false;
+              break;
+            }
+
+            const headline = state.translatedHeadlines[h];
+            const parts = [
+              { key: "en", lang: "en-US", text: headline.en, label: `Headline ${h + 1} EN` },
+              { key: "fa", lang: "fa-IR", text: headline.fa, label: `Headline ${h + 1} FA` },
+              { key: "ru", lang: "ru-RU", text: headline.ru, label: `Headline ${h + 1} RU` }
+            ];
+
+            let startStep = 0;
+            if (h === state.headlinePlayback.headlineIndex) {
+              startStep = Math.min(Math.max(state.headlinePlayback.langStep, 0), parts.length - 1);
+            }
+
+            for (let step = startStep; step < parts.length; step += 1) {
+              if (token !== state.playbackToken) {
+                finishedAll = false;
+                break;
+              }
+
+              const part = parts[step];
+              setHeadlinePlaybackCursor(h, step);
+              setStatus(`Reading headline ${h + 1}/${state.translatedHeadlines.length}, ${part.key.toUpperCase()}...`, "");
+
+              const highlightTarget = { id: `headline-text-${h}-${part.key}`, text: part.text };
+              if (part.key === "fa") {
+                await speakWithPreferredLangs(part.text, ["fa-AF", "prs-AF", "prs", "fa-IR", "fa"], {
+                  awaitEnd: true,
+                  highlightTargets: [highlightTarget],
+                  trackerLabel: part.label
+                });
+              } else {
+                await speakWithSpeechSynthesis(part.text, part.lang, {
+                  forceMatchedVoice: true,
+                  awaitEnd: true,
+                  highlightTargets: [highlightTarget],
+                  trackerLabel: part.label
+                });
+              }
+            }
+
+            if (!finishedAll) {
+              break;
+            }
+            setHeadlinePlaybackCursor(h + 1, 0);
+          }
+        } finally {
+          if (token === state.playbackToken) {
+            state.headlinePlayback.active = false;
+            state.playbackMode = "none";
+            updatePlaybackButtons();
+          }
+        }
+
+        if (finishedAll && state.headlinePlayback.headlineIndex >= state.translatedHeadlines.length) {
+          setStatus("Finished all loaded headlines.", "ok");
+          resetHeadlinePlaybackPosition();
+        } else if (!finishedAll) {
+          setStatus(getHeadlinePauseLabel(), "");
+        }
+      }
+
+      async function playAllArticles() {
+        if (!state.translatedHeadlines.length) {
+          throw new Error("No headlines loaded.");
+        }
+
+        if (state.globalPlayback.headlineIndex >= state.translatedHeadlines.length) {
+          resetGlobalPlaybackPosition();
+        }
+
+        stopArticlePlayback();
+        const token = state.playbackToken;
+        state.playbackMode = "articles";
+        state.globalPlayback.active = true;
+        updatePlaybackButtons();
+        let finishedAll = true;
+
+        try {
+          for (let h = state.globalPlayback.headlineIndex; h < state.translatedHeadlines.length; h += 1) {
+            if (token !== state.playbackToken) {
+              finishedAll = false;
+              break;
+            }
+
+            const record = getArticleRecord(h);
+            const panel = document.getElementById(`article-panel-${h}`);
+            if (panel) {
+              panel.hidden = false;
+            }
+            if (!record.loaded) {
+              setStatus(`Loading article ${h + 1}/${state.translatedHeadlines.length}...`, "");
+              try {
+                await loadArticleTranslations(h);
+              } catch (error) {
+                setArticleStatus(h, `Load failed: ${error.message}`);
+                setGlobalPlaybackCursor(h + 1, 0);
+                continue;
+              }
+            }
+
+            if (!record.sentences.length) {
+              setGlobalPlaybackCursor(h + 1, 0);
+              continue;
+            }
+
+            let startSentence = 0;
+            if (h === state.globalPlayback.headlineIndex) {
+              startSentence = Math.min(
+                Math.max(state.globalPlayback.sentenceIndex, 0),
+                record.sentences.length - 1
+              );
+            }
+
+            for (let s = startSentence; s < record.sentences.length; s += 1) {
+              if (token !== state.playbackToken) {
+                finishedAll = false;
+                break;
+              }
+              setGlobalPlaybackCursor(h, s);
+              setStatus(`Playing article ${h + 1}, sentence ${s + 1}...`, "");
+              try {
+                await speakSentenceTrio(h, s);
+              } catch (error) {
+                if (token !== state.playbackToken) {
+                  finishedAll = false;
+                  break;
+                }
+                throw error;
+              }
+            }
+
+            if (!finishedAll) {
+              break;
+            }
+
+            setGlobalPlaybackCursor(h + 1, 0);
+          }
+        } finally {
+          if (token === state.playbackToken) {
+            state.globalPlayback.active = false;
+            state.playbackMode = "none";
+            updatePlaybackButtons();
+          }
+        }
+
+        if (finishedAll && state.globalPlayback.headlineIndex >= state.translatedHeadlines.length) {
+          setStatus("Finished all loaded articles.", "ok");
+          resetGlobalPlaybackPosition();
+        } else if (!finishedAll) {
+          setStatus(getGlobalPauseLabel(), "");
+        }
+      }
+
+      function renderCards(translatedHeadlines) {
+        state.translatedHeadlines = translatedHeadlines;
+        state.articleData = new Map();
+
+        cardsEl.innerHTML = translatedHeadlines.map((item, index) => {
+          const english = escapeHtml(item.en);
+          const persian = escapeHtml(item.fa);
+          const russian = escapeHtml(item.ru);
+          const source = item.source ? escapeHtml(item.source) : "";
+          const sourceLink = source
+            ? `<a class="source-link" href="${source}" target="_blank" rel="noopener noreferrer">Source</a>`
+            : `<span class="source-link">No source link</span>`;
+
+          return `
+            <article class="card">
+              <div class="card-head">
+                <span>Headline ${index + 1}</span>
+                <div class="card-head-right">
+                  ${sourceLink}
+                  <button class="sentence-index-btn" type="button" data-action="toggle-article-panel" data-headline-index="${index}">Options</button>
+                </div>
+              </div>
+
+              <section class="lang-block">
+                <div class="lang-row">
+                  <span class="lang-name">English</span>
+                  <button class="speak-btn" type="button" data-speak-key="headline-${index}-en" data-speak-lang="en-US" data-speak-text="${english}" data-highlight-target="headline-text-${index}-en" data-tracker-label="Headline ${index + 1} EN">Speak EN</button>
+                </div>
+                <p class="lang-text" id="headline-text-${index}-en">${english}</p>
+              </section>
+
+              <section class="lang-block">
+                <div class="lang-row">
+                  <span class="lang-name">Farsi / Persian</span>
+                  <button class="speak-btn" type="button" data-speak-key="headline-${index}-fa" data-speak-lang="fa-IR" data-speak-text="${persian}" data-highlight-target="headline-text-${index}-fa" data-tracker-label="Headline ${index + 1} FA">Speak FA</button>
+                </div>
+                <p class="lang-text fa" id="headline-text-${index}-fa">${persian}</p>
+              </section>
+
+              <section class="lang-block">
+                <div class="lang-row">
+                  <span class="lang-name">Russian</span>
+                  <button class="speak-btn" type="button" data-speak-key="headline-${index}-ru" data-speak-lang="ru-RU" data-speak-text="${russian}" data-highlight-target="headline-text-${index}-ru" data-tracker-label="Headline ${index + 1} RU">Speak RU</button>
+                </div>
+                <p class="lang-text" id="headline-text-${index}-ru">${russian}</p>
+              </section>
+
+              <section class="article-panel" id="article-panel-${index}" hidden>
+                <div class="article-actions">
+                  <button class="sentence-index-btn" type="button" data-action="load-article" data-headline-index="${index}">Load Article Translations</button>
+                  <button class="sentence-index-btn" type="button" data-action="play-all-sentences" data-headline-index="${index}">Play All</button>
+                  <button class="sentence-index-btn" type="button" data-action="stop-all-sentences" data-headline-index="${index}">Stop</button>
+                  <button class="sentence-index-btn" type="button" data-action="prev-sentence" data-headline-index="${index}">Prev</button>
+                  <button class="sentence-index-btn" type="button" data-action="next-sentence" data-headline-index="${index}">Next</button>
+                </div>
+                <p class="article-status" id="article-status-${index}">Not loaded.</p>
+                <div class="sentence-list" id="sentence-list-${index}"></div>
+              </section>
+            </article>
+          `;
+        }).join("");
+      }
+
+      function getRequestedCount() {
+        const value = Number.parseInt(maxItemsInput.value, 10);
+        if (!Number.isFinite(value)) {
+          return 8;
+        }
+
+        return Math.min(Math.max(value, 1), 25);
+      }
+
+      function resetHeadlinePlaybackPosition() {
+        state.headlinePlayback.active = false;
+        state.headlinePlayback.headlineIndex = 0;
+        state.headlinePlayback.langStep = 0;
+        updatePlaybackButtons();
+      }
+
+      function resetGlobalPlaybackPosition() {
+        state.globalPlayback.active = false;
+        state.globalPlayback.headlineIndex = 0;
+        state.globalPlayback.sentenceIndex = 0;
+        updatePlaybackButtons();
+      }
+
+      async function runFetchAndTranslate(options = {}) {
+        const {
+          onlyUnseen = false,
+          targetCount = getRequestedCount(),
+          markSeen = true
+        } = options;
+
+        const sourceUrl = SOURCE_URL;
+        const maxItems = Math.min(Math.max(targetCount, 1), 25);
+        const fetchPoolSize = onlyUnseen ? Math.min(80, Math.max(maxItems * 8, 32)) : maxItems;
+
+        stopArticlePlayback();
+        resetHeadlinePlaybackPosition();
+        resetGlobalPlaybackPosition();
+        state.currentSpeakKey = "";
+        cardsEl.innerHTML = "";
+        setStatus("Fetching headlines...", "");
+
+        try {
+          const { headlines, proxy } = await fetchHeadlines(sourceUrl, fetchPoolSize);
+          const deduped = onlyUnseen
+            ? headlines.filter((headline) => !state.seenHeadlineKeys.has(canonicalKey(headline.title)))
+            : headlines;
+          const selected = deduped.slice(0, maxItems);
+
+          if (!selected.length) {
+            setStatus("No unseen headlines found right now. Try again later.", "error");
+            return;
+          }
+
+          setStatus(`Fetched ${selected.length} headlines via ${proxy}. Translating FA/RU...`, "");
+
+          const [faTranslations, ruTranslations] = await Promise.all([
+            Promise.all(selected.map((headline) => translateText(headline.title, "fa"))),
+            Promise.all(selected.map((headline) => translateText(headline.title, "ru")))
+          ]);
+
+          const translated = selected.map((headline, index) => ({
+            en: headline.title,
+            fa: faTranslations[index],
+            ru: ruTranslations[index],
+            source: headline.link
+          }));
+
+          if (markSeen) {
+            for (const headline of translated) {
+              state.seenHeadlineKeys.add(canonicalKey(headline.en));
+            }
+          }
+
+          resetGlobalPlaybackPosition();
+          renderCards(translated);
+          setStatus(`Done: ${translated.length} headlines translated.`, "ok");
+        } catch (error) {
+          setStatus(`Failed: ${error.message}`, "error");
+        }
+      }
+
+      cardsEl.addEventListener("click", async (event) => {
+        const actionButton = event.target.closest("button[data-action]");
+        if (actionButton) {
+          const action = actionButton.getAttribute("data-action");
+          const headlineIndex = Number.parseInt(actionButton.getAttribute("data-headline-index") || "", 10);
+          const sentenceIndex = Number.parseInt(actionButton.getAttribute("data-sentence-index") || "", 10);
+
+          if (!Number.isFinite(headlineIndex)) {
+            return;
+          }
+
+          const record = getArticleRecord(headlineIndex);
+
+          try {
+            if (action === "toggle-article-panel") {
+              const panel = document.getElementById(`article-panel-${headlineIndex}`);
+              if (panel) {
+                panel.hidden = !panel.hidden;
+              }
+              return;
+            }
+
+            if (action === "load-article") {
+              await loadArticleTranslations(headlineIndex);
+              return;
+            }
+
+            if (action === "play-all-sentences") {
+              if (!record.loaded) {
+                await loadArticleTranslations(headlineIndex);
+              }
+              setArticleStatus(headlineIndex, "Playing all sentences EN → FA → RU...");
+              await playAllSentences(headlineIndex);
+              setArticleStatus(headlineIndex, `Stopped at sentence ${record.currentSentenceIndex + 1}.`);
+              return;
+            }
+
+            if (action === "stop-all-sentences") {
+              stopArticlePlayback();
+              setArticleStatus(headlineIndex, `Stopped at sentence ${record.currentSentenceIndex + 1}.`);
+              return;
+            }
+
+            if (action === "prev-sentence" || action === "next-sentence") {
+              if (!record.loaded || !record.sentences.length) {
+                setArticleStatus(headlineIndex, "Load article translations first.");
+                return;
+              }
+              const delta = action === "prev-sentence" ? -1 : 1;
+              const nextIndex = Math.min(
+                Math.max(record.currentSentenceIndex + delta, 0),
+                record.sentences.length - 1
+              );
+              record.currentSentenceIndex = nextIndex;
+              renderSentenceList(headlineIndex);
+              setArticleStatus(headlineIndex, `Selected sentence ${nextIndex + 1}.`);
+              return;
+            }
+
+            if (action === "select-sentence") {
+              if (!record.loaded || !record.sentences.length || !Number.isFinite(sentenceIndex)) {
+                return;
+              }
+              record.currentSentenceIndex = Math.min(
+                Math.max(sentenceIndex, 0),
+                record.sentences.length - 1
+              );
+              renderSentenceList(headlineIndex);
+              setArticleStatus(headlineIndex, `Selected sentence ${record.currentSentenceIndex + 1}.`);
+              return;
+            }
+
+            if (action === "play-sentence-trio") {
+              if (!record.loaded) {
+                await loadArticleTranslations(headlineIndex);
+              }
+              const indexToPlay = Number.isFinite(sentenceIndex) ? sentenceIndex : record.currentSentenceIndex;
+              stopArticlePlayback();
+              setArticleStatus(headlineIndex, `Playing sentence ${indexToPlay + 1} EN → FA → RU...`);
+              await speakSentenceTrio(headlineIndex, indexToPlay);
+              setArticleStatus(headlineIndex, `Finished sentence ${indexToPlay + 1}.`);
+              return;
+            }
+          } catch (error) {
+            setArticleStatus(headlineIndex, `Action failed: ${error.message}`);
+          }
+
+          return;
+        }
+
+        const button = event.target.closest("button[data-speak-lang][data-speak-text]");
+        if (!button) {
+          return;
+        }
+
+        const text = button.getAttribute("data-speak-text") || "";
+        const lang = button.getAttribute("data-speak-lang") || "en-US";
+        const speakKey = button.getAttribute("data-speak-key") || `${lang}:${text.slice(0, 48)}`;
+        const highlightTargetId = button.getAttribute("data-highlight-target") || "";
+        const trackerLabel = button.getAttribute("data-tracker-label") || "";
+
+        const isAlreadySpeaking = Boolean(state.currentSpeakKey && state.currentSpeakKey === speakKey && window.speechSynthesis && window.speechSynthesis.speaking);
+        if (isAlreadySpeaking) {
+          stopAllSpeech();
+          state.currentSpeakKey = "";
+          return;
+        }
+
+        try {
+          stopArticlePlayback();
+          state.currentSpeakKey = speakKey;
+          await speakText(text, lang, {
+            highlightTargets: highlightTargetId ? [{ id: highlightTargetId, text }] : [],
+            trackerLabel
+          });
+        } catch (error) {
+          setStatus(`Speak failed: ${error.message}`, "error");
+        } finally {
+          state.currentSpeakKey = "";
+        }
+      });
+
+      stopSpeechBtn.addEventListener("click", () => {
+        const headlinePaused = state.headlinePlayback.active || hasPausedHeadlinePlayback();
+        const articlePaused = state.globalPlayback.active || hasPausedGlobalPlayback();
+        stopArticlePlayback();
+        state.currentSpeakKey = "";
+        if (headlinePaused) {
+          setStatus(getHeadlinePauseLabel(), "");
+          return;
+        }
+        if (articlePaused) {
+          setStatus(getGlobalPauseLabel(), "");
+          return;
+        }
+        setStatus("Speech stopped.", "");
+      });
+
+      readAllHeadlinesBtn.addEventListener("click", async () => {
+        try {
+          await playAllHeadlines();
+        } catch (error) {
+          setStatus(`Read Headlines failed: ${error.message}`, "error");
+        }
+      });
+
+      playAllArticlesBtn.addEventListener("click", async () => {
+        try {
+          await playAllArticles();
+        } catch (error) {
+          setStatus(`Play All failed: ${error.message}`, "error");
+        }
+      });
+
+      loadNewBtn.addEventListener("click", async () => {
+        await runFetchAndTranslate({
+          onlyUnseen: true,
+          targetCount: getRequestedCount(),
+          markSeen: true
+        });
+      });
+
+      maxItemsInput.addEventListener("input", () => {
+        updateLoadNewButtonLabel();
+      });
+
+      controls.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        await runFetchAndTranslate({
+          onlyUnseen: false,
+          targetCount: getRequestedCount(),
+          markSeen: true
+        });
+      });
+
+      if (window.speechSynthesis) {
+        state.voices = window.speechSynthesis.getVoices();
+        window.speechSynthesis.onvoiceschanged = () => {
+          state.voices = window.speechSynthesis.getVoices();
+        };
+        refreshVoices().catch((error) => console.warn("Voice refresh failed:", error));
+      }
+      updateLoadNewButtonLabel();
+      updatePlaybackButtons();
+
+    })();
+  </script>
+</body>
+</html>
