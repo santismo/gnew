@@ -415,6 +415,7 @@
       <div class="actions">
         <button class="btn btn-primary" id="fetchBtn" type="submit">Fetch + Translate</button>
         <button class="btn" id="loadNewBtn" type="button">Load 8 New</button>
+        <button class="btn" id="loadBookBtn" type="button">Load Random Book</button>
         <button class="btn" id="readAllHeadlinesBtn" type="button">Read All Headlines</button>
         <button class="btn" id="playAllArticlesBtn" type="button">Read All Articles</button>
         <button class="btn" id="stopSpeechBtn" type="button">Stop Speech</button>
@@ -443,6 +444,7 @@
       const controls = document.getElementById("controls");
       const maxItemsInput = document.getElementById("maxItems");
       const loadNewBtn = document.getElementById("loadNewBtn");
+      const loadBookBtn = document.getElementById("loadBookBtn");
       const readAllHeadlinesBtn = document.getElementById("readAllHeadlinesBtn");
       const playAllArticlesBtn = document.getElementById("playAllArticlesBtn");
       const statusEl = document.getElementById("status");
@@ -480,6 +482,7 @@
       };
 
       const translationEndpoint = "https://translate.googleapis.com/translate_a/single";
+      const STANDARD_EBOOKS_LIST_URL = "https://standardebooks.org/ebooks";
       const rejectHeadlinePattern = /^(top news|top stories|daily briefing|latest .+ news|.+ blindspots?|blindspot|news|local|for you|search|subscribe|login|company|help|tools|trending topics|my news bias)$/i;
 
       function setStatus(message, type) {
@@ -640,6 +643,206 @@
 
       function isGroundArticleLink(link) {
         return Boolean(link && /^https?:\/\/ground\.news\/article\//i.test(link));
+      }
+
+      function normalizeStandardEbookLink(href) {
+        if (!href) {
+          return "";
+        }
+
+        try {
+          const url = new URL(href, "https://standardebooks.org");
+          const host = url.hostname.toLowerCase();
+          if (host !== "standardebooks.org" && host !== "www.standardebooks.org") {
+            return "";
+          }
+          const path = url.pathname.replace(/\/+$/, "");
+          return `${url.origin}${path || "/"}`;
+        } catch (error) {
+          return "";
+        }
+      }
+
+      function isStandardEbookWorkLink(link) {
+        if (!link) {
+          return false;
+        }
+
+        try {
+          const url = new URL(link);
+          if (!/^standardebooks\.org$/i.test(url.hostname) && !/^www\.standardebooks\.org$/i.test(url.hostname)) {
+            return false;
+          }
+
+          const segments = url.pathname.split("/").filter(Boolean);
+          if (!segments.length || segments[0].toLowerCase() !== "ebooks") {
+            return false;
+          }
+
+          if (segments.length < 3) {
+            return false;
+          }
+
+          const disallowed = new Set([
+            "text",
+            "single-page",
+            "downloads",
+            "download",
+            "metadata",
+            "about",
+            "collections",
+            "contributors",
+            "new-releases",
+            "popular",
+            "rss",
+            "feed",
+            "search"
+          ]);
+
+          return !segments.some((segment) => disallowed.has(segment.toLowerCase()));
+        } catch (error) {
+          return false;
+        }
+      }
+
+      function cleanBookTitle(raw) {
+        if (!raw) {
+          return "";
+        }
+
+        const title = normalizeSpaces(String(raw || "").replace(/\s+by\s+.+$/i, ""));
+        if (title.length < 2 || title.length > 180) {
+          return "";
+        }
+
+        if (/^(ebooks|all ebooks|standard ebooks|download|read online|about|collections?)$/i.test(title)) {
+          return "";
+        }
+
+        return title;
+      }
+
+      function bookTitleFromUrl(link) {
+        try {
+          const url = new URL(link);
+          const segments = url.pathname.split("/").filter(Boolean);
+          if (segments.length < 3) {
+            return "Random Standard Ebooks Title";
+          }
+          const raw = segments[2];
+          return raw
+            .split("-")
+            .filter(Boolean)
+            .map((part) => part[0].toUpperCase() + part.slice(1))
+            .join(" ");
+        } catch (error) {
+          return "Random Standard Ebooks Title";
+        }
+      }
+
+      function extractStandardEbooksFromHtml(html) {
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+        const books = [];
+        const seen = new Set();
+
+        for (const anchor of doc.querySelectorAll("a[href]")) {
+          const link = normalizeStandardEbookLink(anchor.getAttribute("href"));
+          if (!isStandardEbookWorkLink(link) || seen.has(link)) {
+            continue;
+          }
+
+          const titleCandidates = [
+            anchor.getAttribute("title") || "",
+            anchor.getAttribute("aria-label") || "",
+            anchor.textContent || ""
+          ];
+          const title = titleCandidates.map((candidate) => cleanBookTitle(candidate)).find(Boolean) || bookTitleFromUrl(link);
+          seen.add(link);
+          books.push({ title, link });
+        }
+
+        return books;
+      }
+
+      function extractStandardEbooksFromMarkdown(markdown) {
+        const books = [];
+        const seen = new Set();
+        const linkPattern = /\[([^\]]+)\]\((https?:\/\/[^)]+|\/[^)]+)\)/g;
+        let match;
+
+        while ((match = linkPattern.exec(markdown)) !== null) {
+          const link = normalizeStandardEbookLink(match[2]);
+          if (!isStandardEbookWorkLink(link) || seen.has(link)) {
+            continue;
+          }
+          const title = cleanBookTitle(match[1]) || bookTitleFromUrl(link);
+          seen.add(link);
+          books.push({ title, link });
+        }
+
+        return books;
+      }
+
+      async function fetchRandomStandardEbook() {
+        const tasks = proxyCandidates.map(async (proxy) => {
+          const body = await fetchText(proxy.build(STANDARD_EBOOKS_LIST_URL), { timeoutMs: 22000, retries: 1 });
+          const fromHtml = extractStandardEbooksFromHtml(body);
+          const books = fromHtml.length ? fromHtml : extractStandardEbooksFromMarkdown(body);
+          if (!books.length) {
+            throw new Error(`${proxy.name}: no books found`);
+          }
+          return { books, proxy: proxy.name };
+        });
+
+        const settled = await Promise.allSettled(tasks);
+        const successful = settled
+          .filter((result) => result.status === "fulfilled")
+          .map((result) => result.value);
+
+        if (!successful.length) {
+          const failures = settled
+            .filter((result) => result.status === "rejected")
+            .map((result) => result.reason?.message || String(result.reason));
+          throw new Error(failures.join(" | "));
+        }
+
+        successful.sort((a, b) => b.books.length - a.books.length);
+        const winner = successful[0];
+        const random = winner.books[Math.floor(Math.random() * winner.books.length)];
+        return { book: random, proxy: winner.proxy };
+      }
+
+      function getSourceCandidates(sourceUrl) {
+        const trimmed = normalizeSpaces(sourceUrl || "");
+        if (!trimmed) {
+          return [];
+        }
+
+        const candidates = [];
+        const seen = new Set();
+        const add = (candidate) => {
+          const value = normalizeSpaces(candidate || "").replace(/\/+$/, "");
+          if (!value || seen.has(value)) {
+            return;
+          }
+          seen.add(value);
+          candidates.push(value);
+        };
+
+        if (/standardebooks\.org/i.test(trimmed)) {
+          const normalized = trimmed.replace(/\/+$/, "");
+          const root = normalized
+            .replace(/\/text\/single-page$/i, "")
+            .replace(/\/text$/i, "");
+          add(`${root}/text/single-page`);
+          add(`${root}/text`);
+          add(root);
+          return candidates;
+        }
+
+        add(trimmed);
+        return candidates;
       }
 
       function extractHeadlineLinksFromMarkdown(markdown) {
@@ -1678,7 +1881,7 @@
       async function loadArticleTranslations(headlineIndex) {
         const headline = state.translatedHeadlines[headlineIndex];
         if (!headline || !headline.source) {
-          throw new Error("No Ground News source link for this headline.");
+          throw new Error("No source link for this entry.");
         }
 
         const record = getArticleRecord(headlineIndex);
@@ -1693,7 +1896,24 @@
         setArticleStatus(headlineIndex, "Loading article text...");
 
         try {
-          const { sentences, proxy } = await fetchArticleSentences(headline.source);
+          const sourceCandidates = getSourceCandidates(headline.source);
+          let fetched = null;
+          let lastError = null;
+          for (const candidate of sourceCandidates) {
+            try {
+              fetched = await fetchArticleSentences(candidate);
+              headline.source = candidate;
+              break;
+            } catch (error) {
+              lastError = error;
+            }
+          }
+
+          if (!fetched) {
+            throw lastError || new Error("Failed to read source text.");
+          }
+
+          const { sentences, proxy } = fetched;
           setArticleStatus(headlineIndex, `Loaded ${sentences.length} sentences via ${proxy}. Translating...`);
 
           const [faSentences, ruSentences] = await Promise.all([
@@ -2119,6 +2339,49 @@
         }
       }
 
+      async function runFetchRandomBook() {
+        stopArticlePlayback();
+        resetHeadlinePlaybackPosition();
+        resetGlobalPlaybackPosition();
+        state.currentSpeakKey = "";
+        cardsEl.innerHTML = "";
+        setStatus("Finding a random Standard Ebooks title...", "");
+
+        try {
+          const { book, proxy } = await fetchRandomStandardEbook();
+          setStatus(`Selected "${book.title}" via ${proxy}. Translating title...`, "");
+
+          const [faTitle, ruTitle] = await Promise.all([
+            translateText(book.title, "fa"),
+            translateText(book.title, "ru")
+          ]);
+
+          renderCards([
+            {
+              en: book.title,
+              fa: faTitle,
+              ru: ruTitle,
+              source: book.link
+            }
+          ]);
+
+          const panel = document.getElementById("article-panel-0");
+          if (panel) {
+            panel.hidden = false;
+          }
+
+          try {
+            await loadArticleTranslations(0);
+            setStatus(`Loaded random book sentences: ${book.title}`, "ok");
+          } catch (error) {
+            setArticleStatus(0, `Book text load failed: ${error.message}`);
+            setStatus(`Book loaded, but sentence extraction failed: ${error.message}`, "error");
+          }
+        } catch (error) {
+          setStatus(`Random book failed: ${error.message}`, "error");
+        }
+      }
+
       cardsEl.addEventListener("click", async (event) => {
         const actionButton = event.target.closest("button[data-action]");
         if (actionButton) {
@@ -2279,6 +2542,10 @@
           targetCount: getRequestedCount(),
           markSeen: true
         });
+      });
+
+      loadBookBtn.addEventListener("click", async () => {
+        await runFetchRandomBook();
       });
 
       maxItemsInput.addEventListener("input", () => {
