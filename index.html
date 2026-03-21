@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ground News Translator</title>
+  <title>news and book translator</title>
   <style>
     :root {
       --bg: #0a0d14;
@@ -422,7 +422,7 @@
   </aside>
 
   <main class="app">
-    <h1>Ground News Headline Translator</h1>
+    <h1>news and book translator</h1>
 
     <form id="controls" novalidate>
       <div class="controls">
@@ -449,6 +449,8 @@
     (() => {
       const SOURCE_URL = "https://ground.news";
       const MAX_ARTICLE_SENTENCES = 14;
+      const BOOK_BATCH_SIZE = 18;
+      const MAX_BOOK_SENTENCE_POOL = 420;
       const proxyCandidates = [
         {
           name: "AllOrigins",
@@ -1288,7 +1290,11 @@
         return paragraphs;
       }
 
-      async function fetchArticleSentences(sourceUrl) {
+      async function fetchArticleSentences(sourceUrl, options = {}) {
+        const maxSentences = Number.isFinite(options.maxSentences)
+          ? Math.max(1, Math.floor(options.maxSentences))
+          : MAX_ARTICLE_SENTENCES;
+
         const articleProxyCandidates = [
           {
             name: "Jina AI Reader",
@@ -1313,7 +1319,7 @@
           for (const paragraph of paragraphs) {
             for (const sentence of splitIntoSentences(paragraph)) {
               sentenceBucket.push(sentence);
-              if (sentenceBucket.length >= MAX_ARTICLE_SENTENCES) {
+              if (sentenceBucket.length >= maxSentences) {
                 return { sentences: sentenceBucket, proxy: proxy.name };
               }
             }
@@ -1881,7 +1887,9 @@
             sentences: [],
             currentSentenceIndex: 0,
             playing: false,
-            status: "Not loaded."
+            status: "Not loaded.",
+            bookAllSentences: null,
+            bookNextIndex: 0
           });
         }
         return state.articleData.get(headlineIndex);
@@ -1923,7 +1931,94 @@
         }).join("");
       }
 
+      async function loadMoreBookSentences(headlineIndex) {
+        const headline = state.translatedHeadlines[headlineIndex];
+        if (!headline || !headline.source) {
+          throw new Error("No source link for this book.");
+        }
+
+        const record = getArticleRecord(headlineIndex);
+        if (record.loading) {
+          return;
+        }
+
+        record.loading = true;
+        try {
+          if (!Array.isArray(record.bookAllSentences) || !record.bookAllSentences.length) {
+            setArticleStatus(headlineIndex, "Loading book text pool...");
+            const sourceCandidates = getSourceCandidates(headline.source);
+            let fetched = null;
+            let lastError = null;
+            for (const candidate of sourceCandidates) {
+              try {
+                fetched = await fetchArticleSentences(candidate, { maxSentences: MAX_BOOK_SENTENCE_POOL });
+                headline.source = candidate;
+                break;
+              } catch (error) {
+                lastError = error;
+              }
+            }
+
+            if (!fetched) {
+              throw lastError || new Error("Failed to read book text.");
+            }
+
+            record.bookAllSentences = fetched.sentences;
+            record.bookNextIndex = 0;
+            setArticleStatus(headlineIndex, `Book pool ready (${record.bookAllSentences.length} sentences).`);
+          }
+
+          if (record.bookNextIndex >= record.bookAllSentences.length) {
+            setArticleStatus(headlineIndex, "No more sentences left in this book extract.");
+            return;
+          }
+
+          const nextChunk = record.bookAllSentences.slice(
+            record.bookNextIndex,
+            record.bookNextIndex + BOOK_BATCH_SIZE
+          );
+
+          setArticleStatus(
+            headlineIndex,
+            `Translating more sentences (${record.bookNextIndex + 1}-${record.bookNextIndex + nextChunk.length})...`
+          );
+
+          const [faSentences, ruSentences] = await Promise.all([
+            Promise.all(nextChunk.map((sentence) => translateText(sentence, "fa"))),
+            Promise.all(nextChunk.map((sentence) => translateText(sentence, "ru")))
+          ]);
+
+          const mapped = nextChunk.map((sentence, index) => ({
+            en: sentence,
+            fa: faSentences[index],
+            ru: ruSentences[index]
+          }));
+
+          record.sentences.push(...mapped);
+          record.bookNextIndex += nextChunk.length;
+          record.loaded = true;
+          if (!record.sentences.length) {
+            record.currentSentenceIndex = 0;
+          } else {
+            record.currentSentenceIndex = Math.min(record.currentSentenceIndex, record.sentences.length - 1);
+          }
+
+          renderSentenceList(headlineIndex);
+          setArticleStatus(
+            headlineIndex,
+            `Loaded ${record.sentences.length}/${record.bookAllSentences.length} sentences.`
+          );
+        } finally {
+          record.loading = false;
+        }
+      }
+
       async function loadArticleTranslations(headlineIndex) {
+        if (state.contentMode === "book") {
+          await loadMoreBookSentences(headlineIndex);
+          return;
+        }
+
         const headline = state.translatedHeadlines[headlineIndex];
         if (!headline || !headline.source) {
           throw new Error("No source link for this entry.");
@@ -2347,6 +2442,7 @@
             <p class="book-title" id="headline-text-0-ru" lang="ru-RU">${russian}</p>
             <div class="article-actions" style="margin-top:10px;">
               <button class="sentence-index-btn" type="button" data-action="load-article" data-headline-index="0">Load Book Sentences</button>
+              <button class="sentence-index-btn" type="button" data-action="load-more-book" data-headline-index="0">Load More Sentences</button>
               <button class="sentence-index-btn" type="button" data-action="play-all-sentences" data-headline-index="0">Play All</button>
               <button class="sentence-index-btn" type="button" data-action="stop-all-sentences" data-headline-index="0">Stop</button>
               <button class="sentence-index-btn" type="button" data-action="prev-sentence" data-headline-index="0">Prev</button>
@@ -2501,6 +2597,15 @@
 
             if (action === "load-article") {
               await loadArticleTranslations(headlineIndex);
+              return;
+            }
+
+            if (action === "load-more-book") {
+              if (state.contentMode !== "book") {
+                setArticleStatus(headlineIndex, "Load more is only available in book mode.");
+                return;
+              }
+              await loadMoreBookSentences(headlineIndex);
               return;
             }
 
