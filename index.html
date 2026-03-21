@@ -451,6 +451,9 @@
       const MAX_ARTICLE_SENTENCES = 14;
       const BOOK_BATCH_SIZE = 18;
       const MAX_BOOK_SENTENCE_POOL = 420;
+      const PIPER_ESM_URL = "https://esm.sh/@mintplex-labs/piper-tts-web@1.0.4";
+      const PIPER_FA_VOICE_ID = "fa_IR-amir-medium";
+      const PIPER_FA_CHUNK_MAX = 260;
       const proxyCandidates = [
         {
           name: "AllOrigins",
@@ -477,9 +480,14 @@
 
       const state = {
         activeAudio: null,
+        activeAudioObjectUrl: "",
+        audioPlaybackToken: 0,
         activeUtterance: null,
         contentMode: "news",
         voices: [],
+        piperModule: null,
+        piperReady: false,
+        piperLoading: false,
         translationCache: new Map(),
         currentSpeakKey: "",
         translatedHeadlines: [],
@@ -497,6 +505,7 @@
           headlineIndex: 0,
           sentenceIndex: 0
         },
+        piperVoiceId: PIPER_FA_VOICE_ID,
         activeSpeechVisual: null,
         isIOS: /iP(hone|od|ad)/i.test(navigator.userAgent || "") ||
           (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1),
@@ -1483,10 +1492,16 @@
       }
 
       function stopAudioPlayback() {
+        state.audioPlaybackToken += 1;
         if (state.activeAudio) {
           state.activeAudio.pause();
           state.activeAudio.currentTime = 0;
+          state.activeAudio.src = "";
           state.activeAudio = null;
+        }
+        if (state.activeAudioObjectUrl) {
+          URL.revokeObjectURL(state.activeAudioObjectUrl);
+          state.activeAudioObjectUrl = "";
         }
       }
 
@@ -1501,6 +1516,219 @@
         stopAudioPlayback();
         stopSpeechSynthesis();
         clearSpeechVisuals();
+      }
+
+      function splitTtsChunks(text, maxChars = PIPER_FA_CHUNK_MAX) {
+        const cleaned = normalizeSpaces(text || "");
+        if (!cleaned) {
+          return [];
+        }
+        if (cleaned.length <= maxChars) {
+          return [cleaned];
+        }
+
+        const sentenceParts = cleaned
+          .split(/(?<=[.!?؟،؛:])\s+/)
+          .map((part) => normalizeSpaces(part))
+          .filter(Boolean);
+
+        const chunks = [];
+        let current = "";
+
+        const pushCurrent = () => {
+          if (current) {
+            chunks.push(current);
+            current = "";
+          }
+        };
+
+        for (const part of sentenceParts.length ? sentenceParts : [cleaned]) {
+          if (part.length > maxChars) {
+            pushCurrent();
+            const words = part.split(/\s+/).filter(Boolean);
+            let longChunk = "";
+            for (const word of words) {
+              const candidate = longChunk ? `${longChunk} ${word}` : word;
+              if (candidate.length <= maxChars) {
+                longChunk = candidate;
+              } else {
+                if (longChunk) {
+                  chunks.push(longChunk);
+                }
+                longChunk = word;
+              }
+            }
+            if (longChunk) {
+              chunks.push(longChunk);
+            }
+            continue;
+          }
+
+          const candidate = current ? `${current} ${part}` : part;
+          if (candidate.length <= maxChars) {
+            current = candidate;
+          } else {
+            pushCurrent();
+            current = part;
+          }
+        }
+        pushCurrent();
+        return chunks.filter(Boolean);
+      }
+
+      function playObjectUrlAudio(objectUrl, options = {}) {
+        const {
+          highlightTargets = [],
+          highlightText = "",
+          charIndex = 0,
+          trackerLabel = ""
+        } = options;
+        const playbackToken = state.audioPlaybackToken;
+
+        return new Promise((resolve, reject) => {
+          const audio = new Audio();
+          state.activeAudio = audio;
+          state.activeAudioObjectUrl = objectUrl;
+          audio.src = objectUrl;
+          audio.preload = "auto";
+          const wasCanceled = () => playbackToken !== state.audioPlaybackToken;
+
+          const finish = (cb, value) => {
+            audio.onended = null;
+            audio.onerror = null;
+            audio.onabort = null;
+            if (state.activeAudio === audio) {
+              state.activeAudio = null;
+            }
+            if (state.activeAudioObjectUrl === objectUrl) {
+              URL.revokeObjectURL(objectUrl);
+              state.activeAudioObjectUrl = "";
+            }
+            cb(value);
+          };
+
+          audio.onended = () => {
+            clearSpeechVisuals();
+            finish(resolve);
+          };
+
+          audio.onabort = () => {
+            if (wasCanceled()) {
+              clearSpeechVisuals();
+              finish(resolve);
+              return;
+            }
+            finish(reject, new Error("Audio playback aborted."));
+          };
+          audio.onerror = () => {
+            if (wasCanceled()) {
+              clearSpeechVisuals();
+              finish(resolve);
+              return;
+            }
+            finish(reject, new Error("Audio playback failed."));
+          };
+
+          applySpeechHighlight(
+            highlightTargets,
+            highlightText,
+            Math.max(0, charIndex),
+            trackerLabel
+          );
+
+          audio.play().catch((error) => {
+            if (wasCanceled()) {
+              clearSpeechVisuals();
+              finish(resolve);
+              return;
+            }
+            finish(reject, error);
+          });
+
+          if (wasCanceled()) {
+            audio.pause();
+            clearSpeechVisuals();
+            finish(resolve);
+          }
+        });
+      }
+
+      async function ensurePiperPersianReady() {
+        if (state.piperReady && state.piperModule) {
+          return;
+        }
+
+        if (state.piperLoading) {
+          for (let i = 0; i < 60; i += 1) {
+            if (state.piperReady && state.piperModule) {
+              return;
+            }
+            await new Promise((resolve) => window.setTimeout(resolve, 150));
+          }
+        }
+
+        state.piperLoading = true;
+        try {
+          const mod = await import(PIPER_ESM_URL);
+          if (!mod || typeof mod.predict !== "function") {
+            throw new Error("Piper module load failed.");
+          }
+
+          state.piperModule = mod;
+
+          // Warm up + cache model assets in OPFS on first use.
+          await mod.download(state.piperVoiceId);
+          state.piperReady = true;
+        } catch (error) {
+          state.piperReady = false;
+          state.piperModule = null;
+          throw error;
+        } finally {
+          state.piperLoading = false;
+        }
+      }
+
+      async function speakWithPiperPersian(text, options = {}) {
+        const cleanText = normalizeSpaces(text || "");
+        if (!cleanText) {
+          return;
+        }
+
+        const visualTargets = normalizeSpeechTargets(options.highlightTargets || []);
+        const trackerLabel = options.trackerLabel || "Persian (Piper)";
+        const chunkList = splitTtsChunks(cleanText);
+        if (!chunkList.length) {
+          return;
+        }
+
+        await ensurePiperPersianReady();
+
+        const playbackToken = state.audioPlaybackToken;
+        let charCursor = 0;
+
+        for (let index = 0; index < chunkList.length; index += 1) {
+          if (playbackToken !== state.audioPlaybackToken) {
+            clearSpeechVisuals();
+            return;
+          }
+          const chunk = chunkList[index];
+
+          const wavBlob = await state.piperModule.predict({
+            text: chunk,
+            voiceId: state.piperVoiceId
+          });
+
+          const objectUrl = URL.createObjectURL(wavBlob);
+          await playObjectUrlAudio(objectUrl, {
+            highlightTargets: visualTargets,
+            highlightText: cleanText,
+            charIndex: charCursor,
+            trackerLabel
+          });
+
+          const foundAt = cleanText.indexOf(chunk, charCursor);
+          charCursor = (foundAt >= 0 ? foundAt : charCursor) + chunk.length;
+        }
       }
 
       function findVoiceForLang(languageCode) {
@@ -1807,10 +2035,33 @@
       }
 
       async function speakWithPreferredLangs(text, languageCodes, options = {}) {
+        const wantsPersian = (languageCodes || []).some((code) => {
+          const normalized = String(code || "").toLowerCase();
+          return normalized.startsWith("fa") || normalized.startsWith("prs");
+        });
+
         if (state.isIOS) {
           const iosLang = normalizeLangForDevice(languageCodes?.[0] || "fa-IR");
-          await speakWithSpeechSynthesis(text, iosLang, {
-            forceMatchedVoice: false,
+          try {
+            await speakWithSpeechSynthesis(text, iosLang, {
+              forceMatchedVoice: false,
+              awaitEnd: Boolean(options.awaitEnd),
+              highlightTargets: options.highlightTargets || [],
+              trackerLabel: options.trackerLabel || ""
+            });
+            return;
+          } catch (error) {
+            if (!wantsPersian) {
+              throw error;
+            }
+            console.warn("iOS Persian system voice unavailable, using Piper fallback:", error);
+          }
+        }
+
+        const available = languageCodes.find((code) => hasVoiceForLang(code));
+        if (available) {
+          await speakWithSpeechSynthesis(text, available, {
+            forceMatchedVoice: true,
             awaitEnd: Boolean(options.awaitEnd),
             highlightTargets: options.highlightTargets || [],
             trackerLabel: options.trackerLabel || ""
@@ -1818,17 +2069,15 @@
           return;
         }
 
-        const available = languageCodes.find((code) => hasVoiceForLang(code));
-        if (!available) {
-          throw new Error("No Dari/Persian voice found on this device/browser.");
+        if (wantsPersian) {
+          await speakWithPiperPersian(text, {
+            highlightTargets: options.highlightTargets || [],
+            trackerLabel: options.trackerLabel || "Farsi"
+          });
+          return;
         }
 
-        await speakWithSpeechSynthesis(text, available, {
-          forceMatchedVoice: true,
-          awaitEnd: Boolean(options.awaitEnd),
-          highlightTargets: options.highlightTargets || [],
-          trackerLabel: options.trackerLabel || ""
-        });
+        throw new Error("No matching voice found on this device/browser.");
       }
 
       async function speakText(text, langTag, options = {}) {
