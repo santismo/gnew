@@ -474,6 +474,8 @@
           sentenceIndex: 0
         },
         activeSpeechVisual: null,
+        isIOS: /iP(hone|od|ad)/i.test(navigator.userAgent || "") ||
+          (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1),
         isSafari: /^((?!chrome|android).)*safari/i.test(navigator.userAgent || "")
       };
 
@@ -1299,8 +1301,65 @@
         );
       }
 
+      function normalizeLangForDevice(languageCode) {
+        const raw = String(languageCode || "").trim();
+        if (!raw) {
+          return raw;
+        }
+
+        if (!state.isIOS) {
+          return raw;
+        }
+
+        const normalized = raw.toLowerCase();
+        const prefix = normalized.split("-")[0];
+        if (prefix === "fa" || prefix === "prs") {
+          return "fa-IR";
+        }
+        if (prefix === "ru") {
+          return "ru-RU";
+        }
+        if (prefix === "en") {
+          return "en-US";
+        }
+        return raw;
+      }
+
+      function findIOSDefaultVoiceForLang(languageCode) {
+        const code = normalizeLangForDevice(languageCode).toLowerCase();
+        const prefix = code.split("-")[0];
+        const candidates = state.voices.filter((voice) => {
+          const lang = (voice.lang || "").toLowerCase();
+          const name = (voice.name || "").toLowerCase();
+          if (!lang && prefix !== "fa" && prefix !== "prs") {
+            return false;
+          }
+
+          if (prefix === "fa" || prefix === "prs") {
+            return (
+              lang.startsWith("fa") ||
+              lang.startsWith("prs") ||
+              /farsi|persian|فارسی|پارسی/.test(name)
+            );
+          }
+
+          return lang === code || lang.startsWith(prefix);
+        });
+
+        if (!candidates.length) {
+          return null;
+        }
+
+        return (
+          candidates.find((voice) => /dariush|داریوش/i.test(`${voice.name || ""} ${voice.voiceURI || ""}`)) ||
+          candidates.find((voice) => voice.default) ||
+          candidates.find((voice) => voice.localService) ||
+          candidates[0]
+        );
+      }
+
       function findPreferredVoiceForLang(languageCode) {
-        const code = languageCode.toLowerCase();
+        const code = normalizeLangForDevice(languageCode).toLowerCase();
         const prefix = code.split("-")[0];
         const candidates = state.voices.filter((voice) => {
           const lang = voice.lang?.toLowerCase() || "";
@@ -1309,6 +1368,10 @@
 
         if (!candidates.length) {
           return null;
+        }
+
+        if (state.isIOS) {
+          return findIOSDefaultVoiceForLang(code) || findBestVoiceForLang(code);
         }
 
         const weightedMatchers = {
@@ -1328,7 +1391,8 @@
             /alex|samantha|ava|allison|daniel|karen|moira|victoria|enhanced/i
           ],
           fa: [
-            /farsi|persian|dari|afghan|فارسی|پارسی|دری/i
+            /farsi|persian|iran|fa-?ir|فارسی|پارسی/i,
+            /dari|afghan|دری/i
           ]
         };
 
@@ -1391,21 +1455,35 @@
         await new Promise((resolve, reject) => {
           const spokenText = normalizeSpaces(text || "");
           const visualTargets = normalizeSpeechTargets(highlightTargets);
+          const requestedLang = normalizeLangForDevice(lang);
+          const requestedPrefix = requestedLang.toLowerCase().split("-")[0];
           const utterance = new SpeechSynthesisUtterance(spokenText);
-          utterance.lang = lang;
+          utterance.lang = requestedLang;
 
-          const preferredVoice = state.isSafari
-            ? (findBestVoiceForLang(lang) || findVoiceForLang(lang) || findPreferredVoiceForLang(lang))
-            : (forceMatchedVoice
-              ? (findPreferredVoiceForLang(lang) || findBestVoiceForLang(lang) || findVoiceForLang(lang))
-              : (findPreferredVoiceForLang(lang) || findBestVoiceForLang(lang)));
-          if (preferredVoice && (forceMatchedVoice || preferredVoice.localService || state.isSafari)) {
+          let preferredVoice = null;
+          if (state.isIOS) {
+            preferredVoice = findIOSDefaultVoiceForLang(requestedLang);
+          } else if (state.isSafari) {
+            preferredVoice = findBestVoiceForLang(requestedLang) || findVoiceForLang(requestedLang) || findPreferredVoiceForLang(requestedLang);
+          } else {
+            preferredVoice = forceMatchedVoice
+              ? (findPreferredVoiceForLang(requestedLang) || findBestVoiceForLang(requestedLang) || findVoiceForLang(requestedLang))
+              : (findPreferredVoiceForLang(requestedLang) || findBestVoiceForLang(requestedLang));
+          }
+
+          // On iPhone, do not silently fall back Persian text to an Arabic/default voice.
+          if (state.isIOS && (requestedPrefix === "fa" || requestedPrefix === "prs") && !preferredVoice) {
+            reject(new Error("No iPhone Persian web voice is exposed. iOS is falling back to non-Persian voices."));
+            return;
+          }
+
+          if (preferredVoice && (state.isIOS || forceMatchedVoice || preferredVoice.localService || state.isSafari)) {
             utterance.voice = preferredVoice;
             if (preferredVoice.lang) {
               utterance.lang = preferredVoice.lang;
             }
             console.debug("Selected speech voice:", {
-              requestedLang: lang,
+              requestedLang,
               name: preferredVoice.name,
               voiceURI: preferredVoice.voiceURI,
               lang: preferredVoice.lang,
@@ -1475,6 +1553,17 @@
       }
 
       async function speakWithPreferredLangs(text, languageCodes, options = {}) {
+        if (state.isIOS) {
+          const iosLang = normalizeLangForDevice(languageCodes?.[0] || "fa-IR");
+          await speakWithSpeechSynthesis(text, iosLang, {
+            forceMatchedVoice: false,
+            awaitEnd: Boolean(options.awaitEnd),
+            highlightTargets: options.highlightTargets || [],
+            trackerLabel: options.trackerLabel || ""
+          });
+          return;
+        }
+
         const available = languageCodes.find((code) => hasVoiceForLang(code));
         if (!available) {
           throw new Error("No Dari/Persian voice found on this device/browser.");
@@ -1489,7 +1578,7 @@
       }
 
       async function speakText(text, langTag, options = {}) {
-        const lang = langTag.toLowerCase();
+        const lang = normalizeLangForDevice(String(langTag || "").toLowerCase());
         const baseLang = lang.split("-")[0];
 
         if (!text) {
@@ -1499,8 +1588,22 @@
         await refreshVoices();
         stopAllSpeech();
 
+        if (state.isIOS) {
+          try {
+            await speakWithSpeechSynthesis(text, lang, {
+              forceMatchedVoice: false,
+              awaitEnd: true,
+              highlightTargets: options.highlightTargets || [],
+              trackerLabel: options.trackerLabel || lang.toUpperCase()
+            });
+            return;
+          } catch (error) {
+            console.warn("iOS speech fallback failed:", error);
+          }
+        }
+
         if (baseLang === "fa") {
-          await speakWithPreferredLangs(text, ["fa-AF", "prs-AF", "prs", "fa-IR", "fa"], {
+          await speakWithPreferredLangs(text, ["fa-IR", "fa", "prs-AF", "prs", "fa-AF"], {
             awaitEnd: true,
             highlightTargets: options.highlightTargets || [],
             trackerLabel: options.trackerLabel || "Farsi"
@@ -1564,9 +1667,9 @@
                 <button class="sentence-index-btn" type="button" data-action="select-sentence" data-headline-index="${headlineIndex}" data-sentence-index="${sentenceIndex}">Sentence ${sentenceIndex + 1}</button>
                 <button class="sentence-index-btn" type="button" data-action="play-sentence-trio" data-headline-index="${headlineIndex}" data-sentence-index="${sentenceIndex}">Play EN→FA→RU</button>
               </div>
-              <p class="sentence-lang"><span class="sentence-prefix">EN:</span><span class="sentence-text" id="sentence-text-${headlineIndex}-${sentenceIndex}-en">${escapeHtml(sentence.en)}</span></p>
-              <p class="sentence-lang fa"><span class="sentence-prefix">FA:</span><span class="sentence-text fa" id="sentence-text-${headlineIndex}-${sentenceIndex}-fa">${escapeHtml(sentence.fa)}</span></p>
-              <p class="sentence-lang"><span class="sentence-prefix">RU:</span><span class="sentence-text" id="sentence-text-${headlineIndex}-${sentenceIndex}-ru">${escapeHtml(sentence.ru)}</span></p>
+              <p class="sentence-lang" lang="en"><span class="sentence-prefix">EN:</span><span class="sentence-text" id="sentence-text-${headlineIndex}-${sentenceIndex}-en" lang="en">${escapeHtml(sentence.en)}</span></p>
+              <p class="sentence-lang fa" lang="fa-IR" dir="rtl"><span class="sentence-prefix">FA:</span><span class="sentence-text fa" id="sentence-text-${headlineIndex}-${sentenceIndex}-fa" lang="fa-IR" dir="rtl">${escapeHtml(sentence.fa)}</span></p>
+              <p class="sentence-lang" lang="ru-RU"><span class="sentence-prefix">RU:</span><span class="sentence-text" id="sentence-text-${headlineIndex}-${sentenceIndex}-ru" lang="ru-RU">${escapeHtml(sentence.ru)}</span></p>
             </article>
           `;
         }).join("");
@@ -1651,7 +1754,7 @@
           highlightTargets: [{ id: `sentence-text-${headlineIndex}-${sentenceIndex}-en`, text: sentence.en }],
           trackerLabel: `Article ${headlineIndex + 1} Sentence ${sentenceIndex + 1} EN`
         });
-        await speakWithPreferredLangs(sentence.fa, ["fa-AF", "prs-AF", "prs", "fa-IR", "fa"], {
+        await speakWithPreferredLangs(sentence.fa, ["fa-IR", "fa", "prs-AF", "prs", "fa-AF"], {
           awaitEnd: true,
           highlightTargets: [{ id: `sentence-text-${headlineIndex}-${sentenceIndex}-fa`, text: sentence.fa }],
           trackerLabel: `Article ${headlineIndex + 1} Sentence ${sentenceIndex + 1} FA`
@@ -1744,7 +1847,7 @@
 
               const highlightTarget = { id: `headline-text-${h}-${part.key}`, text: part.text };
               if (part.key === "fa") {
-                await speakWithPreferredLangs(part.text, ["fa-AF", "prs-AF", "prs", "fa-IR", "fa"], {
+                await speakWithPreferredLangs(part.text, ["fa-IR", "fa", "prs-AF", "prs", "fa-AF"], {
                   awaitEnd: true,
                   highlightTargets: [highlightTarget],
                   trackerLabel: part.label
@@ -1900,7 +2003,7 @@
                   <span class="lang-name">English</span>
                   <button class="speak-btn" type="button" data-speak-key="headline-${index}-en" data-speak-lang="en-US" data-speak-text="${english}" data-highlight-target="headline-text-${index}-en" data-tracker-label="Headline ${index + 1} EN">Speak EN</button>
                 </div>
-                <p class="lang-text" id="headline-text-${index}-en">${english}</p>
+                <p class="lang-text" id="headline-text-${index}-en" lang="en">${english}</p>
               </section>
 
               <section class="lang-block">
@@ -1908,7 +2011,7 @@
                   <span class="lang-name">Farsi / Persian</span>
                   <button class="speak-btn" type="button" data-speak-key="headline-${index}-fa" data-speak-lang="fa-IR" data-speak-text="${persian}" data-highlight-target="headline-text-${index}-fa" data-tracker-label="Headline ${index + 1} FA">Speak FA</button>
                 </div>
-                <p class="lang-text fa" id="headline-text-${index}-fa">${persian}</p>
+                <p class="lang-text fa" id="headline-text-${index}-fa" lang="fa-IR" dir="rtl">${persian}</p>
               </section>
 
               <section class="lang-block">
@@ -1916,7 +2019,7 @@
                   <span class="lang-name">Russian</span>
                   <button class="speak-btn" type="button" data-speak-key="headline-${index}-ru" data-speak-lang="ru-RU" data-speak-text="${russian}" data-highlight-target="headline-text-${index}-ru" data-tracker-label="Headline ${index + 1} RU">Speak RU</button>
                 </div>
-                <p class="lang-text" id="headline-text-${index}-ru">${russian}</p>
+                <p class="lang-text" id="headline-text-${index}-ru" lang="ru-RU">${russian}</p>
               </section>
 
               <section class="article-panel" id="article-panel-${index}" hidden>
