@@ -345,6 +345,25 @@
       font-family: "Noto Naskh Arabic", "Tahoma", sans-serif;
     }
 
+    .book-meta {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.86rem;
+      line-height: 1.45;
+    }
+
+    .book-title {
+      margin: 8px 0 0;
+      font-size: 1.02rem;
+      line-height: 1.5;
+    }
+
+    .book-title.fa {
+      direction: rtl;
+      text-align: right;
+      font-family: "Noto Naskh Arabic", "Tahoma", sans-serif;
+    }
+
     .now-speaking-box {
       position: fixed;
       top: 10px;
@@ -457,6 +476,7 @@
       const state = {
         activeAudio: null,
         activeUtterance: null,
+        contentMode: "news",
         voices: [],
         translationCache: new Map(),
         currentSpeakKey: "",
@@ -521,6 +541,13 @@
           return "Speech stopped.";
         }
 
+        if (state.contentMode === "book") {
+          const record = state.articleData.get(0);
+          const maxSentence = record?.sentences?.length || 1;
+          const sentence = Math.min(Math.max(state.globalPlayback.sentenceIndex + 1, 1), maxSentence);
+          return `Paused at sentence ${sentence}.`;
+        }
+
         if (state.globalPlayback.headlineIndex >= state.translatedHeadlines.length) {
           return "Paused at end of loaded articles.";
         }
@@ -544,6 +571,12 @@
           return;
         }
 
+        if (state.contentMode === "book") {
+          readAllHeadlinesBtn.textContent = "Read All Headlines";
+          readAllHeadlinesBtn.disabled = true;
+          return;
+        }
+
         if (state.playbackMode === "headlines" && state.headlinePlayback.active) {
           readAllHeadlinesBtn.textContent = "Reading...";
           readAllHeadlinesBtn.disabled = true;
@@ -556,6 +589,18 @@
 
       function updatePlayAllButtonLabel() {
         if (!playAllArticlesBtn) {
+          return;
+        }
+
+        if (state.contentMode === "book") {
+          if (state.playbackMode === "articles" && state.globalPlayback.active) {
+            playAllArticlesBtn.textContent = "Reading...";
+            playAllArticlesBtn.disabled = true;
+            return;
+          }
+
+          playAllArticlesBtn.disabled = false;
+          playAllArticlesBtn.textContent = hasPausedGlobalPlayback() ? "Resume Book" : "Read Book Sentences";
           return;
         }
 
@@ -1893,7 +1938,10 @@
         }
 
         record.loading = true;
-        setArticleStatus(headlineIndex, "Loading article text...");
+        setArticleStatus(
+          headlineIndex,
+          state.contentMode === "book" ? "Loading book text..." : "Loading article text..."
+        );
 
         try {
           const sourceCandidates = getSourceCandidates(headline.source);
@@ -2132,7 +2180,12 @@
               panel.hidden = false;
             }
             if (!record.loaded) {
-              setStatus(`Loading article ${h + 1}/${state.translatedHeadlines.length}...`, "");
+              setStatus(
+                state.contentMode === "book"
+                  ? "Loading book sentences..."
+                  : `Loading article ${h + 1}/${state.translatedHeadlines.length}...`,
+                ""
+              );
               try {
                 await loadArticleTranslations(h);
               } catch (error) {
@@ -2161,7 +2214,12 @@
                 break;
               }
               setGlobalPlaybackCursor(h, s);
-              setStatus(`Playing article ${h + 1}, sentence ${s + 1}...`, "");
+              setStatus(
+                state.contentMode === "book"
+                  ? `Playing sentence ${s + 1}...`
+                  : `Playing article ${h + 1}, sentence ${s + 1}...`,
+                ""
+              );
               try {
                 await speakSentenceTrio(h, s);
               } catch (error) {
@@ -2188,7 +2246,10 @@
         }
 
         if (finishedAll && state.globalPlayback.headlineIndex >= state.translatedHeadlines.length) {
-          setStatus("Finished all loaded articles.", "ok");
+          setStatus(
+            state.contentMode === "book" ? "Finished book sentences." : "Finished all loaded articles.",
+            "ok"
+          );
           resetGlobalPlaybackPosition();
         } else if (!finishedAll) {
           setStatus(getGlobalPauseLabel(), "");
@@ -2196,6 +2257,7 @@
       }
 
       function renderCards(translatedHeadlines) {
+        state.contentMode = "news";
         state.translatedHeadlines = translatedHeadlines;
         state.articleData = new Map();
 
@@ -2256,6 +2318,46 @@
             </article>
           `;
         }).join("");
+
+        updatePlaybackButtons();
+      }
+
+      function renderBookStackedCard(book) {
+        state.contentMode = "book";
+        state.translatedHeadlines = [book];
+        state.articleData = new Map();
+
+        const english = escapeHtml(book.en || "");
+        const persian = escapeHtml(book.fa || "");
+        const russian = escapeHtml(book.ru || "");
+        const source = book.source ? escapeHtml(book.source) : "";
+        const sourceLink = source
+          ? `<a class="source-link" href="${source}" target="_blank" rel="noopener noreferrer">Source</a>`
+          : `<span class="source-link">No source link</span>`;
+
+        cardsEl.innerHTML = `
+          <article class="card">
+            <div class="card-head">
+              <span>Random Book</span>
+              <div class="card-head-right">${sourceLink}</div>
+            </div>
+            <p class="book-meta">Title (EN/FA/RU)</p>
+            <p class="book-title" id="headline-text-0-en" lang="en">${english}</p>
+            <p class="book-title fa" id="headline-text-0-fa" lang="fa-IR" dir="rtl">${persian}</p>
+            <p class="book-title" id="headline-text-0-ru" lang="ru-RU">${russian}</p>
+            <div class="article-actions" style="margin-top:10px;">
+              <button class="sentence-index-btn" type="button" data-action="load-article" data-headline-index="0">Load Book Sentences</button>
+              <button class="sentence-index-btn" type="button" data-action="play-all-sentences" data-headline-index="0">Play All</button>
+              <button class="sentence-index-btn" type="button" data-action="stop-all-sentences" data-headline-index="0">Stop</button>
+              <button class="sentence-index-btn" type="button" data-action="prev-sentence" data-headline-index="0">Prev</button>
+              <button class="sentence-index-btn" type="button" data-action="next-sentence" data-headline-index="0">Next</button>
+            </div>
+            <p class="article-status" id="article-status-0">Not loaded.</p>
+            <div class="sentence-list" id="sentence-list-0"></div>
+          </article>
+        `;
+
+        updatePlaybackButtons();
       }
 
       function getRequestedCount() {
@@ -2356,19 +2458,12 @@
             translateText(book.title, "ru")
           ]);
 
-          renderCards([
-            {
-              en: book.title,
-              fa: faTitle,
-              ru: ruTitle,
-              source: book.link
-            }
-          ]);
-
-          const panel = document.getElementById("article-panel-0");
-          if (panel) {
-            panel.hidden = false;
-          }
+          renderBookStackedCard({
+            en: book.title,
+            fa: faTitle,
+            ru: ruTitle,
+            source: book.link
+          });
 
           try {
             await loadArticleTranslations(0);
