@@ -1927,7 +1927,6 @@
         const {
           forceMatchedVoice = false,
           awaitEnd = false,
-          allowNoExactVoice = false,
           highlightTargets = [],
           trackerLabel = ""
         } = options;
@@ -1952,7 +1951,7 @@
           }
 
           // On iPhone, do not silently fall back Persian text to an Arabic/default voice.
-          if (state.isIOS && (requestedPrefix === "fa" || requestedPrefix === "prs") && !preferredVoice && !allowNoExactVoice) {
+          if (state.isIOS && (requestedPrefix === "fa" || requestedPrefix === "prs") && !preferredVoice) {
             reject(new Error("No iPhone Persian web voice is exposed. iOS is falling back to non-Persian voices."));
             return;
           }
@@ -2037,6 +2036,23 @@
           const normalized = String(code || "").toLowerCase();
           return normalized.startsWith("fa") || normalized.startsWith("prs");
         });
+        const available = languageCodes.find((code) => hasVoiceForLang(code));
+        let piperTried = false;
+
+        // Safari often misroutes Persian to non-Persian voices.
+        // Prefer Piper first for Persian on Safari.
+        if (wantsPersian && state.isSafari) {
+          try {
+            await speakWithPiperPersian(text, {
+              highlightTargets: options.highlightTargets || [],
+              trackerLabel: options.trackerLabel || "Farsi"
+            });
+            return;
+          } catch (error) {
+            piperTried = true;
+            console.warn("Safari Persian Piper path failed; trying real Persian system voice:", error);
+          }
+        }
 
         if (state.isIOS) {
           const iosLang = normalizeLangForDevice(languageCodes?.[0] || "fa-IR");
@@ -2056,10 +2072,9 @@
           }
         }
 
-        const available = languageCodes.find((code) => hasVoiceForLang(code));
         if (available) {
           await speakWithSpeechSynthesis(text, available, {
-            forceMatchedVoice: !wantsPersian,
+            forceMatchedVoice: true,
             awaitEnd: Boolean(options.awaitEnd),
             highlightTargets: options.highlightTargets || [],
             trackerLabel: options.trackerLabel || ""
@@ -2075,17 +2090,12 @@
             });
             return;
           } catch (error) {
-            console.warn("Piper Persian fallback failed; trying best-effort system voice:", error);
+            console.warn("Piper Persian fallback failed:", error);
+            if (!piperTried) {
+              throw new Error("Persian speech unavailable. No Persian system voice and Piper fallback failed.");
+            }
           }
-
-          await speakWithSpeechSynthesis(text, "fa-IR", {
-            forceMatchedVoice: false,
-            allowNoExactVoice: true,
-            awaitEnd: Boolean(options.awaitEnd),
-            highlightTargets: options.highlightTargets || [],
-            trackerLabel: options.trackerLabel || "Farsi"
-          });
-          return;
+          throw new Error("Persian speech unavailable. Try again on a strong network or another browser session.");
         }
 
         throw new Error("No matching voice found on this device/browser.");
