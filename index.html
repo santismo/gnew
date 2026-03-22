@@ -451,7 +451,7 @@
       const MAX_ARTICLE_SENTENCES = 14;
       const BOOK_BATCH_SIZE = 18;
       const MAX_BOOK_SENTENCE_POOL = 420;
-      const PIPER_ESM_URL = "https://esm.sh/@mintplex-labs/piper-tts-web@1.0.4";
+      const PIPER_ESM_URL = "https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.4/+esm";
       const PIPER_FA_VOICE_ID = "fa_IR-amir-medium";
       const PIPER_FA_CHUNK_MAX = 260;
       const proxyCandidates = [
@@ -1675,9 +1675,6 @@
           }
 
           state.piperModule = mod;
-
-          // Warm up + cache model assets in OPFS on first use.
-          await mod.download(state.piperVoiceId);
           state.piperReady = true;
         } catch (error) {
           state.piperReady = false;
@@ -1930,6 +1927,7 @@
         const {
           forceMatchedVoice = false,
           awaitEnd = false,
+          allowNoExactVoice = false,
           highlightTargets = [],
           trackerLabel = ""
         } = options;
@@ -1954,7 +1952,7 @@
           }
 
           // On iPhone, do not silently fall back Persian text to an Arabic/default voice.
-          if (state.isIOS && (requestedPrefix === "fa" || requestedPrefix === "prs") && !preferredVoice) {
+          if (state.isIOS && (requestedPrefix === "fa" || requestedPrefix === "prs") && !preferredVoice && !allowNoExactVoice) {
             reject(new Error("No iPhone Persian web voice is exposed. iOS is falling back to non-Persian voices."));
             return;
           }
@@ -2061,7 +2059,7 @@
         const available = languageCodes.find((code) => hasVoiceForLang(code));
         if (available) {
           await speakWithSpeechSynthesis(text, available, {
-            forceMatchedVoice: true,
+            forceMatchedVoice: !wantsPersian,
             awaitEnd: Boolean(options.awaitEnd),
             highlightTargets: options.highlightTargets || [],
             trackerLabel: options.trackerLabel || ""
@@ -2070,7 +2068,20 @@
         }
 
         if (wantsPersian) {
-          await speakWithPiperPersian(text, {
+          try {
+            await speakWithPiperPersian(text, {
+              highlightTargets: options.highlightTargets || [],
+              trackerLabel: options.trackerLabel || "Farsi"
+            });
+            return;
+          } catch (error) {
+            console.warn("Piper Persian fallback failed; trying best-effort system voice:", error);
+          }
+
+          await speakWithSpeechSynthesis(text, "fa-IR", {
+            forceMatchedVoice: false,
+            allowNoExactVoice: true,
+            awaitEnd: Boolean(options.awaitEnd),
             highlightTargets: options.highlightTargets || [],
             trackerLabel: options.trackerLabel || "Farsi"
           });
