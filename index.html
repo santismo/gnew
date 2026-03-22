@@ -306,6 +306,13 @@
       margin-bottom: 6px;
     }
 
+    .sentence-row-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: flex-end;
+    }
+
     .sentence-index-btn {
       background: transparent;
       border: 1px solid var(--border);
@@ -453,6 +460,10 @@
       const MAX_BOOK_SENTENCE_POOL = 420;
       const PIPER_ESM_URL = "https://cdn.jsdelivr.net/npm/@mintplex-labs/piper-tts-web@1.0.4/+esm";
       const PIPER_FA_VOICE_ID = "fa_IR-amir-medium";
+      const PIPER_EN_VOICE_ID = "en_US-lessac-medium";
+      const PIPER_RU_VOICE_ID = "ru_RU-irina-medium";
+      const USE_PIPER_FOR_EN = true;
+      const USE_PIPER_FOR_RU = true;
       const PIPER_FA_CHUNK_MAX = 260;
       const proxyCandidates = [
         {
@@ -488,6 +499,8 @@
         piperModule: null,
         piperReady: false,
         piperLoading: false,
+        piperDownloadedVoices: new Set(),
+        piperPrefetchAttemptedVoices: new Set(),
         translationCache: new Map(),
         currentSpeakKey: "",
         translatedHeadlines: [],
@@ -505,7 +518,11 @@
           headlineIndex: 0,
           sentenceIndex: 0
         },
-        piperVoiceId: PIPER_FA_VOICE_ID,
+        piperPersianVoiceId: PIPER_FA_VOICE_ID,
+        piperEnglishVoiceId: PIPER_EN_VOICE_ID,
+        piperRussianVoiceId: PIPER_RU_VOICE_ID,
+        usePiperForEnglish: USE_PIPER_FOR_EN,
+        usePiperForRussian: USE_PIPER_FOR_RU,
         activeSpeechVisual: null,
         isIOS: /iP(hone|od|ad)/i.test(navigator.userAgent || "") ||
           (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1),
@@ -1653,7 +1670,7 @@
         });
       }
 
-      async function ensurePiperPersianReady() {
+      async function ensurePiperRuntimeReady() {
         if (state.piperReady && state.piperModule) {
           return;
         }
@@ -1685,7 +1702,30 @@
         }
       }
 
-      async function speakWithPiperPersian(text, options = {}) {
+      async function prefetchPiperVoice(voiceId) {
+        if (!voiceId) {
+          return;
+        }
+
+        await ensurePiperRuntimeReady();
+        if (state.piperDownloadedVoices.has(voiceId) || state.piperPrefetchAttemptedVoices.has(voiceId)) {
+          return;
+        }
+
+        if (!state.piperModule || typeof state.piperModule.download !== "function") {
+          return;
+        }
+
+        state.piperPrefetchAttemptedVoices.add(voiceId);
+        try {
+          await state.piperModule.download(voiceId);
+          state.piperDownloadedVoices.add(voiceId);
+        } catch (error) {
+          console.warn(`Piper voice prefetch failed (${voiceId}):`, error);
+        }
+      }
+
+      async function speakWithPiperVoice(text, voiceId, options = {}) {
         const cleanText = normalizeSpaces(text || "");
         if (!cleanText) {
           return;
@@ -1698,7 +1738,8 @@
           return;
         }
 
-        await ensurePiperPersianReady();
+        await ensurePiperRuntimeReady();
+        await prefetchPiperVoice(voiceId);
 
         const playbackToken = state.audioPlaybackToken;
         let charCursor = 0;
@@ -1712,7 +1753,7 @@
 
           const wavBlob = await state.piperModule.predict({
             text: chunk,
-            voiceId: state.piperVoiceId
+            voiceId
           });
 
           const objectUrl = URL.createObjectURL(wavBlob);
@@ -1726,6 +1767,13 @@
           const foundAt = cleanText.indexOf(chunk, charCursor);
           charCursor = (foundAt >= 0 ? foundAt : charCursor) + chunk.length;
         }
+      }
+
+      async function speakWithPiperPersian(text, options = {}) {
+        await speakWithPiperVoice(text, state.piperPersianVoiceId, {
+          ...options,
+          trackerLabel: options.trackerLabel || "Farsi"
+        });
       }
 
       function findVoiceForLang(languageCode) {
@@ -2101,6 +2149,58 @@
         throw new Error("No matching voice found on this device/browser.");
       }
 
+      async function speakEnglishPreferred(text, options = {}) {
+        if (state.usePiperForEnglish && state.piperEnglishVoiceId) {
+          try {
+            await speakWithPiperVoice(text, state.piperEnglishVoiceId, {
+              awaitEnd: true,
+              highlightTargets: options.highlightTargets || [],
+              trackerLabel: options.trackerLabel || "English"
+            });
+            return;
+          } catch (error) {
+            console.warn("Piper English path failed; using system voice:", error);
+          }
+        }
+
+        await speakWithSpeechSynthesis(text, "en-US", {
+          forceMatchedVoice: true,
+          awaitEnd: true,
+          highlightTargets: options.highlightTargets || [],
+          trackerLabel: options.trackerLabel || "English"
+        });
+      }
+
+      async function speakRussianPreferred(text, options = {}) {
+        if (state.usePiperForRussian && state.piperRussianVoiceId) {
+          try {
+            await speakWithPiperVoice(text, state.piperRussianVoiceId, {
+              awaitEnd: true,
+              highlightTargets: options.highlightTargets || [],
+              trackerLabel: options.trackerLabel || "Russian"
+            });
+            return;
+          } catch (error) {
+            console.warn("Piper Russian path failed; using system voice:", error);
+          }
+        }
+
+        await speakWithSpeechSynthesis(text, "ru-RU", {
+          forceMatchedVoice: true,
+          awaitEnd: true,
+          highlightTargets: options.highlightTargets || [],
+          trackerLabel: options.trackerLabel || "Russian"
+        });
+      }
+
+      async function speakPersianPreferred(text, options = {}) {
+        await speakWithPreferredLangs(text, ["fa-IR", "fa", "prs-AF", "prs", "fa-AF"], {
+          awaitEnd: true,
+          highlightTargets: options.highlightTargets || [],
+          trackerLabel: options.trackerLabel || "Farsi"
+        });
+      }
+
       async function speakText(text, langTag, options = {}) {
         const lang = normalizeLangForDevice(String(langTag || "").toLowerCase());
         const baseLang = lang.split("-")[0];
@@ -2111,6 +2211,22 @@
 
         await refreshVoices();
         stopAllSpeech();
+
+        if (baseLang === "en") {
+          await speakEnglishPreferred(text, {
+            highlightTargets: options.highlightTargets || [],
+            trackerLabel: options.trackerLabel || "English"
+          });
+          return;
+        }
+
+        if (baseLang === "ru") {
+          await speakRussianPreferred(text, {
+            highlightTargets: options.highlightTargets || [],
+            trackerLabel: options.trackerLabel || "Russian"
+          });
+          return;
+        }
 
         if (state.isIOS) {
           try {
@@ -2126,9 +2242,8 @@
           }
         }
 
-        if (baseLang === "fa") {
-          await speakWithPreferredLangs(text, ["fa-IR", "fa", "prs-AF", "prs", "fa-AF"], {
-            awaitEnd: true,
+        if (baseLang === "fa" || baseLang === "prs") {
+          await speakPersianPreferred(text, {
             highlightTargets: options.highlightTargets || [],
             trackerLabel: options.trackerLabel || "Farsi"
           });
@@ -2191,7 +2306,12 @@
             <article class="sentence-row ${activeClass}" data-sentence-index="${sentenceIndex}">
               <div class="sentence-row-head">
                 <button class="sentence-index-btn" type="button" data-action="select-sentence" data-headline-index="${headlineIndex}" data-sentence-index="${sentenceIndex}">Sentence ${sentenceIndex + 1}</button>
-                <button class="sentence-index-btn" type="button" data-action="play-sentence-trio" data-headline-index="${headlineIndex}" data-sentence-index="${sentenceIndex}">Play EN→FA→RU</button>
+                <div class="sentence-row-actions">
+                  <button class="sentence-index-btn" type="button" data-action="play-sentence-trio" data-headline-index="${headlineIndex}" data-sentence-index="${sentenceIndex}">Play EN→FA→RU</button>
+                  <button class="sentence-index-btn" type="button" data-action="play-sentence-lang" data-lang="en" data-headline-index="${headlineIndex}" data-sentence-index="${sentenceIndex}">Play EN</button>
+                  <button class="sentence-index-btn" type="button" data-action="play-sentence-lang" data-lang="fa" data-headline-index="${headlineIndex}" data-sentence-index="${sentenceIndex}">Play FA</button>
+                  <button class="sentence-index-btn" type="button" data-action="play-sentence-lang" data-lang="ru" data-headline-index="${headlineIndex}" data-sentence-index="${sentenceIndex}">Play RU</button>
+                </div>
               </div>
               <p class="sentence-lang" lang="en"><span class="sentence-prefix">EN:</span><span class="sentence-text" id="sentence-text-${headlineIndex}-${sentenceIndex}-en" lang="en">${escapeHtml(sentence.en)}</span></p>
               <p class="sentence-lang fa" lang="fa-IR" dir="rtl"><span class="sentence-prefix">FA:</span><span class="sentence-text fa" id="sentence-text-${headlineIndex}-${sentenceIndex}-fa" lang="fa-IR" dir="rtl">${escapeHtml(sentence.fa)}</span></p>
@@ -2381,22 +2501,75 @@
         renderSentenceList(headlineIndex);
 
         const sentence = record.sentences[sentenceIndex];
-        await speakWithSpeechSynthesis(sentence.en, "en-US", {
-          forceMatchedVoice: true,
-          awaitEnd: true,
+        await speakEnglishPreferred(sentence.en, {
           highlightTargets: [{ id: `sentence-text-${headlineIndex}-${sentenceIndex}-en`, text: sentence.en }],
           trackerLabel: `Article ${headlineIndex + 1} Sentence ${sentenceIndex + 1} EN`
         });
-        await speakWithPreferredLangs(sentence.fa, ["fa-IR", "fa", "prs-AF", "prs", "fa-AF"], {
-          awaitEnd: true,
+        await speakPersianPreferred(sentence.fa, {
           highlightTargets: [{ id: `sentence-text-${headlineIndex}-${sentenceIndex}-fa`, text: sentence.fa }],
           trackerLabel: `Article ${headlineIndex + 1} Sentence ${sentenceIndex + 1} FA`
         });
-        await speakWithSpeechSynthesis(sentence.ru, "ru-RU", {
-          forceMatchedVoice: true,
-          awaitEnd: true,
+        await speakRussianPreferred(sentence.ru, {
           highlightTargets: [{ id: `sentence-text-${headlineIndex}-${sentenceIndex}-ru`, text: sentence.ru }],
           trackerLabel: `Article ${headlineIndex + 1} Sentence ${sentenceIndex + 1} RU`
+        });
+      }
+
+      async function speakSentenceLanguage(headlineIndex, sentenceIndex, langKey) {
+        const record = getArticleRecord(headlineIndex);
+        if (!record.loaded || !record.sentences[sentenceIndex]) {
+          throw new Error("Load article translations first.");
+        }
+
+        const normalizedKey = String(langKey || "").toLowerCase();
+        const sentence = record.sentences[sentenceIndex];
+        const config = {
+          en: {
+            text: sentence.en,
+            tracker: "EN"
+          },
+          fa: {
+            text: sentence.fa,
+            tracker: "FA"
+          },
+          ru: {
+            text: sentence.ru,
+            tracker: "RU"
+          }
+        }[normalizedKey];
+
+        if (!config) {
+          throw new Error("Unsupported sentence language.");
+        }
+
+        await refreshVoices();
+        record.currentSentenceIndex = sentenceIndex;
+        renderSentenceList(headlineIndex);
+
+        const highlightTarget = [{
+          id: `sentence-text-${headlineIndex}-${sentenceIndex}-${normalizedKey}`,
+          text: config.text
+        }];
+
+        if (normalizedKey === "en") {
+          await speakEnglishPreferred(config.text, {
+            highlightTargets: highlightTarget,
+            trackerLabel: `Article ${headlineIndex + 1} Sentence ${sentenceIndex + 1} EN`
+          });
+          return;
+        }
+
+        if (normalizedKey === "fa") {
+          await speakPersianPreferred(config.text, {
+            highlightTargets: highlightTarget,
+            trackerLabel: `Article ${headlineIndex + 1} Sentence ${sentenceIndex + 1} FA`
+          });
+          return;
+        }
+
+        await speakRussianPreferred(config.text, {
+          highlightTargets: highlightTarget,
+          trackerLabel: `Article ${headlineIndex + 1} Sentence ${sentenceIndex + 1} ${config.tracker}`
         });
       }
 
@@ -2480,15 +2653,17 @@
 
               const highlightTarget = { id: `headline-text-${h}-${part.key}`, text: part.text };
               if (part.key === "fa") {
-                await speakWithPreferredLangs(part.text, ["fa-IR", "fa", "prs-AF", "prs", "fa-AF"], {
-                  awaitEnd: true,
+                await speakPersianPreferred(part.text, {
+                  highlightTargets: [highlightTarget],
+                  trackerLabel: part.label
+                });
+              } else if (part.key === "en") {
+                await speakEnglishPreferred(part.text, {
                   highlightTargets: [highlightTarget],
                   trackerLabel: part.label
                 });
               } else {
-                await speakWithSpeechSynthesis(part.text, part.lang, {
-                  forceMatchedVoice: true,
-                  awaitEnd: true,
+                await speakRussianPreferred(part.text, {
                   highlightTargets: [highlightTarget],
                   trackerLabel: part.label
                 });
@@ -2849,6 +3024,7 @@
           const action = actionButton.getAttribute("data-action");
           const headlineIndex = Number.parseInt(actionButton.getAttribute("data-headline-index") || "", 10);
           const sentenceIndex = Number.parseInt(actionButton.getAttribute("data-sentence-index") || "", 10);
+          const sentenceLang = (actionButton.getAttribute("data-lang") || "").toLowerCase();
 
           if (!Number.isFinite(headlineIndex)) {
             return;
@@ -2935,6 +3111,19 @@
               setArticleStatus(headlineIndex, `Finished sentence ${indexToPlay + 1}.`);
               return;
             }
+
+            if (action === "play-sentence-lang") {
+              if (!record.loaded) {
+                await loadArticleTranslations(headlineIndex);
+              }
+              const indexToPlay = Number.isFinite(sentenceIndex) ? sentenceIndex : record.currentSentenceIndex;
+              const langLabel = sentenceLang ? sentenceLang.toUpperCase() : "EN";
+              stopArticlePlayback();
+              setArticleStatus(headlineIndex, `Playing sentence ${indexToPlay + 1} ${langLabel}...`);
+              await speakSentenceLanguage(headlineIndex, indexToPlay, sentenceLang || "en");
+              setArticleStatus(headlineIndex, `Finished sentence ${indexToPlay + 1} ${langLabel}.`);
+              return;
+            }
           } catch (error) {
             setArticleStatus(headlineIndex, `Action failed: ${error.message}`);
           }
@@ -2953,7 +3142,9 @@
         const highlightTargetId = button.getAttribute("data-highlight-target") || "";
         const trackerLabel = button.getAttribute("data-tracker-label") || "";
 
-        const isAlreadySpeaking = Boolean(state.currentSpeakKey && state.currentSpeakKey === speakKey && window.speechSynthesis && window.speechSynthesis.speaking);
+        const synthesisSpeaking = Boolean(window.speechSynthesis && window.speechSynthesis.speaking);
+        const audioSpeaking = Boolean(state.activeAudio && !state.activeAudio.paused);
+        const isAlreadySpeaking = Boolean(state.currentSpeakKey && state.currentSpeakKey === speakKey && (synthesisSpeaking || audioSpeaking));
         if (isAlreadySpeaking) {
           stopAllSpeech();
           state.currentSpeakKey = "";
@@ -3038,6 +3229,41 @@
         };
         refreshVoices().catch((error) => console.warn("Voice refresh failed:", error));
       }
+
+      function prewarmPiperInBackground() {
+        const warmup = async () => {
+          try {
+            const voiceIds = [state.piperPersianVoiceId];
+            if (state.usePiperForEnglish && state.piperEnglishVoiceId) {
+              voiceIds.push(state.piperEnglishVoiceId);
+            }
+            if (state.usePiperForRussian && state.piperRussianVoiceId) {
+              voiceIds.push(state.piperRussianVoiceId);
+            }
+
+            await ensurePiperRuntimeReady();
+            for (const voiceId of voiceIds) {
+              await prefetchPiperVoice(voiceId);
+            }
+            console.debug(`Piper prewarm complete (${voiceIds.join(", ")}).`);
+          } catch (error) {
+            console.warn("Piper prewarm skipped/failed:", error);
+          }
+        };
+
+        if (typeof window.requestIdleCallback === "function") {
+          window.requestIdleCallback(() => {
+            warmup().catch(() => {});
+          }, { timeout: 8000 });
+          return;
+        }
+
+        window.setTimeout(() => {
+          warmup().catch(() => {});
+        }, 1600);
+      }
+
+      prewarmPiperInBackground();
       updateLoadNewButtonLabel();
       updatePlaybackButtons();
 
