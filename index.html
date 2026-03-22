@@ -78,13 +78,15 @@
     }
 
     input,
+    select,
     button {
       border-radius: 10px;
       border: 1px solid var(--border);
       font: inherit;
     }
 
-    input {
+    input,
+    select {
       width: 100%;
       background: var(--panel-soft);
       color: var(--text);
@@ -92,7 +94,8 @@
       outline: none;
     }
 
-    input:focus {
+    input:focus,
+    select:focus {
       border-color: var(--accent);
       box-shadow: 0 0 0 3px rgba(103, 179, 255, 0.18);
     }
@@ -102,6 +105,22 @@
       display: flex;
       flex-wrap: wrap;
       gap: 10px;
+    }
+
+    .book-browser-controls {
+      margin-top: 10px;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .book-select-field {
+      margin-top: 0;
+    }
+
+    .book-select-field select {
+      min-height: 180px;
     }
 
 
@@ -419,6 +438,10 @@
         grid-template-columns: 1fr;
       }
 
+      .book-browser-controls {
+        grid-template-columns: 1fr;
+      }
+
     }
   </style>
 </head>
@@ -437,14 +460,26 @@
           <label for="maxItems">Count</label>
           <input id="maxItems" type="number" min="1" max="25" value="8" required>
         </div>
+        <div class="field">
+          <label for="bookPage">Book Page</label>
+          <input id="bookPage" type="number" min="1" max="120" value="1" required>
+        </div>
       </div>
       <div class="actions">
         <button class="btn btn-primary" id="fetchBtn" type="submit">Fetch + Translate</button>
         <button class="btn" id="loadNewBtn" type="button">Load 8 New</button>
         <button class="btn" id="loadBookBtn" type="button">Load Random Book</button>
+        <button class="btn" id="browseBooksBtn" type="button">Browse Books Page</button>
+        <button class="btn" id="loadSelectedBookBtn" type="button" disabled>Load Selected Book</button>
         <button class="btn" id="readAllHeadlinesBtn" type="button">Read All Headlines</button>
         <button class="btn" id="playAllArticlesBtn" type="button">Read All Articles</button>
         <button class="btn" id="stopSpeechBtn" type="button">Stop Speech</button>
+      </div>
+      <div class="book-browser-controls">
+        <div class="field book-select-field">
+          <label for="bookTitleSelect">Books On Page</label>
+          <select id="bookTitleSelect" size="6" aria-label="Books On Page"></select>
+        </div>
       </div>
     </form>
 
@@ -465,6 +500,7 @@
       const USE_PIPER_FOR_EN = true;
       const USE_PIPER_FOR_RU = true;
       const PIPER_FA_CHUNK_MAX = 260;
+      const STANDARD_EBOOKS_PER_PAGE = 48;
       const proxyCandidates = [
         {
           name: "AllOrigins",
@@ -478,8 +514,12 @@
 
       const controls = document.getElementById("controls");
       const maxItemsInput = document.getElementById("maxItems");
+      const bookPageInput = document.getElementById("bookPage");
+      const bookTitleSelect = document.getElementById("bookTitleSelect");
       const loadNewBtn = document.getElementById("loadNewBtn");
       const loadBookBtn = document.getElementById("loadBookBtn");
+      const browseBooksBtn = document.getElementById("browseBooksBtn");
+      const loadSelectedBookBtn = document.getElementById("loadSelectedBookBtn");
       const readAllHeadlinesBtn = document.getElementById("readAllHeadlinesBtn");
       const playAllArticlesBtn = document.getElementById("playAllArticlesBtn");
       const statusEl = document.getElementById("status");
@@ -496,9 +536,8 @@
         activeUtterance: null,
         contentMode: "news",
         voices: [],
-        piperModule: null,
-        piperReady: false,
-        piperLoading: false,
+        piperModulesByVoice: new Map(),
+        piperModuleLoadingByVoice: new Map(),
         piperDownloadedVoices: new Set(),
         piperPrefetchAttemptedVoices: new Set(),
         translationCache: new Map(),
@@ -523,6 +562,8 @@
         piperRussianVoiceId: PIPER_RU_VOICE_ID,
         usePiperForEnglish: USE_PIPER_FOR_EN,
         usePiperForRussian: USE_PIPER_FOR_RU,
+        bookBrowserPage: 1,
+        bookBrowserBooks: [],
         activeSpeechVisual: null,
         isIOS: /iP(hone|od|ad)/i.test(navigator.userAgent || "") ||
           (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1),
@@ -599,6 +640,12 @@
           return;
         }
 
+        if (!state.translatedHeadlines.length) {
+          readAllHeadlinesBtn.textContent = "Read All Headlines";
+          readAllHeadlinesBtn.disabled = true;
+          return;
+        }
+
         if (state.contentMode === "book") {
           readAllHeadlinesBtn.textContent = "Read All Headlines";
           readAllHeadlinesBtn.disabled = true;
@@ -617,6 +664,12 @@
 
       function updatePlayAllButtonLabel() {
         if (!playAllArticlesBtn) {
+          return;
+        }
+
+        if (!state.translatedHeadlines.length) {
+          playAllArticlesBtn.textContent = "Read All Articles";
+          playAllArticlesBtn.disabled = true;
           return;
         }
 
@@ -857,13 +910,17 @@
         return books;
       }
 
-      async function fetchRandomStandardEbook() {
+      async function fetchStandardEbookPage(pageNumber, perPage = STANDARD_EBOOKS_PER_PAGE) {
+        const safePage = Math.max(1, Math.floor(Number(pageNumber) || 1));
+        const safePerPage = Math.max(1, Math.floor(Number(perPage) || STANDARD_EBOOKS_PER_PAGE));
+        const pageUrl = `${STANDARD_EBOOKS_LIST_URL}?page=${safePage}&per-page=${safePerPage}`;
+
         const tasks = proxyCandidates.map(async (proxy) => {
-          const body = await fetchText(proxy.build(STANDARD_EBOOKS_LIST_URL), { timeoutMs: 22000, retries: 1 });
+          const body = await fetchText(proxy.build(pageUrl), { timeoutMs: 26000, retries: 1 });
           const fromHtml = extractStandardEbooksFromHtml(body);
           const books = fromHtml.length ? fromHtml : extractStandardEbooksFromMarkdown(body);
           if (!books.length) {
-            throw new Error(`${proxy.name}: no books found`);
+            throw new Error(`${proxy.name}: no books found on page ${safePage}`);
           }
           return { books, proxy: proxy.name };
         });
@@ -882,8 +939,21 @@
 
         successful.sort((a, b) => b.books.length - a.books.length);
         const winner = successful[0];
-        const random = winner.books[Math.floor(Math.random() * winner.books.length)];
-        return { book: random, proxy: winner.proxy };
+        return {
+          books: winner.books,
+          proxy: winner.proxy,
+          page: safePage,
+          perPage: safePerPage
+        };
+      }
+
+      async function fetchRandomStandardEbook() {
+        const { books, proxy, page } = await fetchStandardEbookPage(
+          Math.floor(Math.random() * 30) + 1,
+          STANDARD_EBOOKS_PER_PAGE
+        );
+        const random = books[Math.floor(Math.random() * books.length)];
+        return { book: random, proxy: `${proxy}, page ${page}` };
       }
 
       function getSourceCandidates(sourceUrl) {
@@ -1208,12 +1278,41 @@
         );
       }
 
+      function isStandardEbooksBoilerplate(text) {
+        const normalized = normalizeSpaces(String(text || "")).toLowerCase();
+        if (!normalized) {
+          return false;
+        }
+
+        const markers = [
+          /this ebook is the product of many hours of hard work by volunteers for standard ebooks/i,
+          /this particular ebook is based on a transcription from project gutenberg/i,
+          /the source text and artwork in this ebook are believed to be in the united states public domain/i,
+          /the creators of,?\s*and contributors to,?\s*this ebook dedicate their contributions to the worldwide public domain/i,
+          /for full license information, see the uncopyright at the end of this ebook/i,
+          /standard ebooks is a volunteer[-\s]?driven project that produces ebook editions of public domain literature/i,
+          /download this and other ebooks carefully produced for true book lovers at standardebooks\.org/i
+        ];
+
+        if (markers.some((marker) => marker.test(normalized))) {
+          return true;
+        }
+
+        return normalized.includes("standard ebooks")
+          && normalized.includes("public domain")
+          && (normalized.includes("project gutenberg") || normalized.includes("internet archive"));
+      }
+
       function isArticleNoise(text) {
         if (!text) {
           return true;
         }
 
         if (text.length < 18) {
+          return true;
+        }
+
+        if (isStandardEbooksBoilerplate(text)) {
           return true;
         }
 
@@ -1271,6 +1370,9 @@
           if (!text || text.length < 50) {
             continue;
           }
+          if (isStandardEbooksBoilerplate(text)) {
+            continue;
+          }
           if (/^copyright|^sign up|^subscribe|^read more/i.test(text) || isArticleNoise(text)) {
             continue;
           }
@@ -1302,6 +1404,9 @@
             continue;
           }
           if (/^\*+$/.test(text)) {
+            continue;
+          }
+          if (isStandardEbooksBoilerplate(text)) {
             continue;
           }
           if (isArticleNoise(text)) {
@@ -1670,35 +1775,37 @@
         });
       }
 
-      async function ensurePiperRuntimeReady() {
-        if (state.piperReady && state.piperModule) {
-          return;
+      async function ensurePiperModuleForVoice(voiceId) {
+        if (!voiceId) {
+          throw new Error("Missing Piper voice id.");
         }
 
-        if (state.piperLoading) {
-          for (let i = 0; i < 60; i += 1) {
-            if (state.piperReady && state.piperModule) {
-              return;
-            }
-            await new Promise((resolve) => window.setTimeout(resolve, 150));
-          }
+        const cached = state.piperModulesByVoice.get(voiceId);
+        if (cached) {
+          return cached;
         }
 
-        state.piperLoading = true;
-        try {
-          const mod = await import(PIPER_ESM_URL);
+        const loading = state.piperModuleLoadingByVoice.get(voiceId);
+        if (loading) {
+          return loading;
+        }
+
+        // Force one module instance per voice to avoid cross-voice session reuse.
+        const moduleUrl = `${PIPER_ESM_URL}?voice=${encodeURIComponent(voiceId)}`;
+        const promise = (async () => {
+          const mod = await import(moduleUrl);
           if (!mod || typeof mod.predict !== "function") {
-            throw new Error("Piper module load failed.");
+            throw new Error(`Piper module load failed for ${voiceId}.`);
           }
+          state.piperModulesByVoice.set(voiceId, mod);
+          return mod;
+        })();
 
-          state.piperModule = mod;
-          state.piperReady = true;
-        } catch (error) {
-          state.piperReady = false;
-          state.piperModule = null;
-          throw error;
+        state.piperModuleLoadingByVoice.set(voiceId, promise);
+        try {
+          return await promise;
         } finally {
-          state.piperLoading = false;
+          state.piperModuleLoadingByVoice.delete(voiceId);
         }
       }
 
@@ -1707,18 +1814,18 @@
           return;
         }
 
-        await ensurePiperRuntimeReady();
+        const mod = await ensurePiperModuleForVoice(voiceId);
         if (state.piperDownloadedVoices.has(voiceId) || state.piperPrefetchAttemptedVoices.has(voiceId)) {
           return;
         }
 
-        if (!state.piperModule || typeof state.piperModule.download !== "function") {
+        if (!mod || typeof mod.download !== "function") {
           return;
         }
 
         state.piperPrefetchAttemptedVoices.add(voiceId);
         try {
-          await state.piperModule.download(voiceId);
+          await mod.download(voiceId);
           state.piperDownloadedVoices.add(voiceId);
         } catch (error) {
           console.warn(`Piper voice prefetch failed (${voiceId}):`, error);
@@ -1738,7 +1845,7 @@
           return;
         }
 
-        await ensurePiperRuntimeReady();
+        const mod = await ensurePiperModuleForVoice(voiceId);
         await prefetchPiperVoice(voiceId);
 
         const playbackToken = state.audioPlaybackToken;
@@ -1751,7 +1858,7 @@
           }
           const chunk = chunkList[index];
 
-          const wavBlob = await state.piperModule.predict({
+          const wavBlob = await mod.predict({
             text: chunk,
             voiceId
           });
@@ -2878,7 +2985,7 @@
         cardsEl.innerHTML = `
           <article class="card">
             <div class="card-head">
-              <span>Random Book</span>
+              <span>Book</span>
               <div class="card-head-right">${sourceLink}</div>
             </div>
             <p class="book-meta">Title (EN/FA/RU)</p>
@@ -2899,6 +3006,87 @@
         `;
 
         updatePlaybackButtons();
+      }
+
+      function renderBookCatalogPage(books, pageNumber, proxyName) {
+        state.contentMode = "book-browse";
+        state.translatedHeadlines = [];
+        state.articleData = new Map();
+
+        cardsEl.innerHTML = books.map((book, index) => {
+          const title = escapeHtml(book.title);
+          const link = escapeHtml(book.link);
+          const encodedTitle = encodeURIComponent(book.title);
+          const encodedLink = encodeURIComponent(book.link);
+
+          return `
+            <article class="card">
+              <div class="card-head">
+                <span>Page ${pageNumber} · Book ${index + 1}</span>
+                <div class="card-head-right">
+                  <a class="source-link" href="${link}" target="_blank" rel="noopener noreferrer">Source</a>
+                </div>
+              </div>
+              <p class="lang-text" lang="en">${title}</p>
+              <div class="article-actions" style="margin-top:10px;">
+                <button class="sentence-index-btn" type="button" data-action="load-catalog-book" data-book-title="${encodedTitle}" data-book-link="${encodedLink}">Load This Book</button>
+              </div>
+            </article>
+          `;
+        }).join("");
+
+        if (!books.length) {
+          cardsEl.innerHTML = `<article class="card"><p class="lang-text">No books found on this page.</p></article>`;
+        }
+
+        setStatus(`Loaded ${books.length} books from page ${pageNumber} via ${proxyName}.`, "ok");
+        updatePlaybackButtons();
+      }
+
+      function updateBookTitleSelect(books) {
+        if (!bookTitleSelect) {
+          return;
+        }
+
+        bookTitleSelect.innerHTML = "";
+        if (!books.length) {
+          const emptyOption = document.createElement("option");
+          emptyOption.value = "";
+          emptyOption.textContent = "No books loaded";
+          bookTitleSelect.appendChild(emptyOption);
+          bookTitleSelect.disabled = true;
+          if (loadSelectedBookBtn) {
+            loadSelectedBookBtn.disabled = true;
+          }
+          return;
+        }
+
+        books.forEach((book, index) => {
+          const option = document.createElement("option");
+          option.value = String(index);
+          option.textContent = `${index + 1}. ${book.title}`;
+          bookTitleSelect.appendChild(option);
+        });
+        bookTitleSelect.disabled = false;
+        if (loadSelectedBookBtn) {
+          loadSelectedBookBtn.disabled = false;
+        }
+      }
+
+      function getRequestedBookPage() {
+        const value = Number.parseInt(bookPageInput?.value || "1", 10);
+        if (!Number.isFinite(value)) {
+          return 1;
+        }
+        return Math.min(Math.max(value, 1), 120);
+      }
+
+      function getSelectedBookFromPicker() {
+        const selectedIndex = Number.parseInt(bookTitleSelect?.value || "", 10);
+        if (!Number.isFinite(selectedIndex)) {
+          return null;
+        }
+        return state.bookBrowserBooks[selectedIndex] || null;
       }
 
       function getRequestedCount() {
@@ -2992,29 +3180,73 @@
 
         try {
           const { book, proxy } = await fetchRandomStandardEbook();
-          setStatus(`Selected "${book.title}" via ${proxy}. Translating title...`, "");
-
-          const [faTitle, ruTitle] = await Promise.all([
-            translateText(book.title, "fa"),
-            translateText(book.title, "ru")
-          ]);
-
-          renderBookStackedCard({
-            en: book.title,
-            fa: faTitle,
-            ru: ruTitle,
-            source: book.link
+          await loadBookEntry(book, {
+            initialStatus: `Selected "${book.title}" via ${proxy}. Translating title...`,
+            successPrefix: "Loaded random book sentences"
           });
-
-          try {
-            await loadArticleTranslations(0);
-            setStatus(`Loaded random book sentences: ${book.title}`, "ok");
-          } catch (error) {
-            setArticleStatus(0, `Book text load failed: ${error.message}`);
-            setStatus(`Book loaded, but sentence extraction failed: ${error.message}`, "error");
-          }
         } catch (error) {
           setStatus(`Random book failed: ${error.message}`, "error");
+        }
+      }
+
+      async function runBrowseBooksPage(pageNumber = getRequestedBookPage()) {
+        stopArticlePlayback();
+        resetHeadlinePlaybackPosition();
+        resetGlobalPlaybackPosition();
+        state.currentSpeakKey = "";
+        cardsEl.innerHTML = "";
+        const requestedPage = Math.min(Math.max(Number(pageNumber) || 1, 1), 120);
+        setStatus(`Loading Standard Ebooks page ${requestedPage}...`, "");
+
+        try {
+          const { books, proxy, page } = await fetchStandardEbookPage(requestedPage, STANDARD_EBOOKS_PER_PAGE);
+          state.bookBrowserPage = page;
+          state.bookBrowserBooks = books;
+          if (bookPageInput) {
+            bookPageInput.value = String(page);
+          }
+          updateBookTitleSelect(books);
+          renderBookCatalogPage(books, page, proxy);
+        } catch (error) {
+          setStatus(`Book browse failed: ${error.message}`, "error");
+          state.bookBrowserBooks = [];
+          updateBookTitleSelect([]);
+        }
+      }
+
+      async function loadBookEntry(book, options = {}) {
+        if (!book?.link) {
+          throw new Error("Missing book link.");
+        }
+
+        stopArticlePlayback();
+        resetHeadlinePlaybackPosition();
+        resetGlobalPlaybackPosition();
+        state.currentSpeakKey = "";
+        cardsEl.innerHTML = "";
+
+        const initialStatus = options.initialStatus || `Selected "${book.title}". Translating title...`;
+        setStatus(initialStatus, "");
+
+        const [faTitle, ruTitle] = await Promise.all([
+          translateText(book.title, "fa"),
+          translateText(book.title, "ru")
+        ]);
+
+        renderBookStackedCard({
+          en: book.title,
+          fa: faTitle,
+          ru: ruTitle,
+          source: book.link
+        });
+
+        try {
+          await loadArticleTranslations(0);
+          const successPrefix = options.successPrefix || "Loaded book sentences";
+          setStatus(`${successPrefix}: ${book.title}`, "ok");
+        } catch (error) {
+          setArticleStatus(0, `Book text load failed: ${error.message}`);
+          setStatus(`Book loaded, but sentence extraction failed: ${error.message}`, "error");
         }
       }
 
@@ -3022,6 +3254,23 @@
         const actionButton = event.target.closest("button[data-action]");
         if (actionButton) {
           const action = actionButton.getAttribute("data-action");
+          if (action === "load-catalog-book") {
+            const encodedTitle = actionButton.getAttribute("data-book-title") || "";
+            const encodedLink = actionButton.getAttribute("data-book-link") || "";
+            const title = decodeURIComponent(encodedTitle || "");
+            const link = decodeURIComponent(encodedLink || "");
+            const finalTitle = title || cleanBookTitle(bookTitleFromUrl(link)) || "Selected Book";
+            try {
+              await loadBookEntry({ title: finalTitle, link }, {
+                initialStatus: `Selected "${finalTitle}". Translating title...`,
+                successPrefix: "Loaded selected book sentences"
+              });
+            } catch (error) {
+              setStatus(`Load selected book failed: ${error.message}`, "error");
+            }
+            return;
+          }
+
           const headlineIndex = Number.parseInt(actionButton.getAttribute("data-headline-index") || "", 10);
           const sentenceIndex = Number.parseInt(actionButton.getAttribute("data-sentence-index") || "", 10);
           const sentenceLang = (actionButton.getAttribute("data-lang") || "").toLowerCase();
@@ -3209,6 +3458,26 @@
         await runFetchRandomBook();
       });
 
+      browseBooksBtn.addEventListener("click", async () => {
+        await runBrowseBooksPage(getRequestedBookPage());
+      });
+
+      loadSelectedBookBtn.addEventListener("click", async () => {
+        const selectedBook = getSelectedBookFromPicker();
+        if (!selectedBook) {
+          setStatus("Pick a book first from the loaded page list.", "error");
+          return;
+        }
+        try {
+          await loadBookEntry(selectedBook, {
+            initialStatus: `Selected "${selectedBook.title}". Translating title...`,
+            successPrefix: "Loaded selected book sentences"
+          });
+        } catch (error) {
+          setStatus(`Load selected book failed: ${error.message}`, "error");
+        }
+      });
+
       maxItemsInput.addEventListener("input", () => {
         updateLoadNewButtonLabel();
       });
@@ -3241,7 +3510,6 @@
               voiceIds.push(state.piperRussianVoiceId);
             }
 
-            await ensurePiperRuntimeReady();
             for (const voiceId of voiceIds) {
               await prefetchPiperVoice(voiceId);
             }
@@ -3265,6 +3533,7 @@
 
       prewarmPiperInBackground();
       updateLoadNewButtonLabel();
+      updateBookTitleSelect([]);
       updatePlaybackButtons();
 
     })();
