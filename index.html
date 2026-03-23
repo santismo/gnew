@@ -503,39 +503,106 @@
       const STANDARD_EBOOKS_PER_PAGE = 48;
       const buildCodeTabsProxy = (url) =>
         `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`;
+      const buildAllOriginsRawProxy = (url) =>
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+      const buildAllOriginsGetProxy = (url) =>
+        `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+      const buildJinaReaderProxy = (url) =>
+        `https://r.jina.ai/http://${String(url || "").replace(/^https?:\/\//i, "")}`;
+      const unwrapIdentity = (body) => String(body || "");
+      const unwrapAllOriginsGet = (body) => {
+        const payload = JSON.parse(String(body || "{}"));
+        const contents = typeof payload?.contents === "string" ? payload.contents : "";
+        if (!contents) {
+          throw new Error("AllOrigins/get: empty contents");
+        }
+        return contents;
+      };
       const newsProxyCandidates = [
         {
           name: "CodeTabs",
-          build: (url) => buildCodeTabsProxy(url)
+          build: (url) => buildCodeTabsProxy(url),
+          unwrap: unwrapIdentity
         },
         {
-          name: "AllOrigins",
-          build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
+          name: "AllOrigins Raw",
+          build: (url) => buildAllOriginsRawProxy(url),
+          unwrap: unwrapIdentity
+        },
+        {
+          name: "AllOrigins Get",
+          build: (url) => buildAllOriginsGetProxy(url),
+          unwrap: unwrapAllOriginsGet
+        },
+        {
+          name: "AllOrigins -> Jina",
+          build: (url) => buildAllOriginsGetProxy(buildJinaReaderProxy(url)),
+          unwrap: unwrapAllOriginsGet
+        },
+        {
+          name: "Jina AI Reader",
+          build: (url) => buildJinaReaderProxy(url),
+          unwrap: unwrapIdentity
         }
       ];
       const bookFetchCandidates = [
         {
           name: "Standard Ebooks Direct",
-          build: (url) => url
+          build: (url) => url,
+          unwrap: unwrapIdentity
         },
         {
           name: "CodeTabs",
-          build: (url) => buildCodeTabsProxy(url)
+          build: (url) => buildCodeTabsProxy(url),
+          unwrap: unwrapIdentity
         },
         {
-          name: "AllOrigins",
-          build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
+          name: "AllOrigins Get",
+          build: (url) => buildAllOriginsGetProxy(url),
+          unwrap: unwrapAllOriginsGet
+        },
+        {
+          name: "AllOrigins Raw",
+          build: (url) => buildAllOriginsRawProxy(url),
+          unwrap: unwrapIdentity
         }
       ];
       const articleProxyCandidates = [
         {
           name: "CodeTabs",
-          build: (url) => buildCodeTabsProxy(url)
+          build: (url) => buildCodeTabsProxy(url),
+          unwrap: unwrapIdentity
         },
         {
-          name: "AllOrigins",
-          build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
+          name: "AllOrigins Get",
+          build: (url) => buildAllOriginsGetProxy(url),
+          unwrap: unwrapAllOriginsGet
+        },
+        {
+          name: "AllOrigins Raw",
+          build: (url) => buildAllOriginsRawProxy(url),
+          unwrap: unwrapIdentity
+        },
+        {
+          name: "AllOrigins -> Jina",
+          build: (url) => buildAllOriginsGetProxy(buildJinaReaderProxy(url)),
+          unwrap: unwrapAllOriginsGet
+        },
+        {
+          name: "Jina AI Reader",
+          build: (url) => buildJinaReaderProxy(url),
+          unwrap: unwrapIdentity
         }
+      ];
+      const FALLBACK_BOOKS = [
+        { title: "The War of the Worlds", link: "https://standardebooks.org/ebooks/h-g-wells/the-war-of-the-worlds" },
+        { title: "Pride and Prejudice", link: "https://standardebooks.org/ebooks/jane-austen/pride-and-prejudice" },
+        { title: "Dracula", link: "https://standardebooks.org/ebooks/bram-stoker/dracula" },
+        { title: "Moby-Dick; or, The Whale", link: "https://standardebooks.org/ebooks/herman-melville/moby-dick-or-the-whale" },
+        { title: "The Time Machine", link: "https://standardebooks.org/ebooks/h-g-wells/the-time-machine" },
+        { title: "The Picture of Dorian Gray", link: "https://standardebooks.org/ebooks/oscar-wilde/the-picture-of-dorian-gray" },
+        { title: "Frankenstein; or, The Modern Prometheus", link: "https://standardebooks.org/ebooks/mary-shelley/frankenstein-or-the-modern-prometheus" },
+        { title: "The Adventures of Sherlock Holmes", link: "https://standardebooks.org/ebooks/arthur-conan-doyle/the-adventures-of-sherlock-holmes" }
       ];
 
       const controls = document.getElementById("controls");
@@ -596,7 +663,9 @@
         isSafari: /^((?!chrome|android).)*safari/i.test(navigator.userAgent || "")
       };
 
-      const translationEndpoint = "https://translate.googleapis.com/translate_a/single";
+      const googleTranslationEndpoint = "https://translate.googleapis.com/translate_a/single";
+      const myMemoryTranslationEndpoint = "https://api.mymemory.translated.net/get";
+      const lingvaTranslationEndpoint = "https://lingva.ml/api/v1";
       const STANDARD_EBOOKS_LIST_URL = "https://standardebooks.org/ebooks";
       const rejectHeadlinePattern = /^(top news|top stories|daily briefing|latest .+ news|.+ blindspots?|blindspot|news|local|for you|search|subscribe|login|company|help|tools|trending topics|my news bias)$/i;
 
@@ -946,11 +1015,12 @@
         const pageUrl = `${STANDARD_EBOOKS_LIST_URL}?page=${safePage}&per-page=${safePerPage}`;
 
         const tasks = bookFetchCandidates.map(async (proxy) => {
-          const body = await fetchText(proxy.build(pageUrl), {
+          const rawBody = await fetchText(proxy.build(pageUrl), {
             timeoutMs: 32000,
             retries: 2,
             label: `${proxy.name} (${new URL(pageUrl).hostname})`
           });
+          const body = (typeof proxy.unwrap === "function" ? proxy.unwrap(rawBody) : rawBody);
           const fromHtml = extractStandardEbooksFromHtml(body);
           const books = fromHtml.length ? fromHtml : extractStandardEbooksFromMarkdown(body);
           if (!books.length) {
@@ -982,12 +1052,17 @@
       }
 
       async function fetchRandomStandardEbook() {
-        const { books, proxy, page } = await fetchStandardEbookPage(
-          Math.floor(Math.random() * 30) + 1,
-          STANDARD_EBOOKS_PER_PAGE
-        );
-        const random = books[Math.floor(Math.random() * books.length)];
-        return { book: random, proxy: `${proxy}, page ${page}` };
+        try {
+          const { books, proxy, page } = await fetchStandardEbookPage(
+            Math.floor(Math.random() * 30) + 1,
+            STANDARD_EBOOKS_PER_PAGE
+          );
+          const random = books[Math.floor(Math.random() * books.length)];
+          return { book: random, proxy: `${proxy}, page ${page}` };
+        } catch (error) {
+          const random = FALLBACK_BOOKS[Math.floor(Math.random() * FALLBACK_BOOKS.length)];
+          return { book: random, proxy: "local fallback catalog" };
+        }
       }
 
       function getSourceCandidates(sourceUrl) {
@@ -1247,11 +1322,12 @@
 
       async function fetchHeadlines(sourceUrl, maxItems) {
         const tasks = newsProxyCandidates.map(async (proxy) => {
-          const body = await fetchText(proxy.build(sourceUrl), {
+          const rawBody = await fetchText(proxy.build(sourceUrl), {
             timeoutMs: 32000,
             retries: 2,
             label: `${proxy.name} (${new URL(sourceUrl).hostname})`
           });
+          const body = (typeof proxy.unwrap === "function" ? proxy.unwrap(rawBody) : rawBody);
           const fromHtml = extractHeadlinesFromHtml(body, maxItems);
           const headlines = fromHtml.length ? fromHtml : extractHeadlinesFromMarkdown(body, maxItems);
 
@@ -1285,6 +1361,64 @@
         throw new Error(failures.join(" | "));
       }
 
+      async function translateViaLingva(text, targetLanguage) {
+        const url = `${lingvaTranslationEndpoint}/en/${encodeURIComponent(targetLanguage)}/${encodeURIComponent(text)}`;
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`Lingva HTTP ${response.status}`);
+        }
+        const payload = await response.json();
+        const translated = normalizeSpaces(String(payload?.translation || ""));
+        if (!translated) {
+          throw new Error("Lingva: empty translation");
+        }
+        return translated;
+      }
+
+      async function translateViaMyMemory(text, targetLanguage) {
+        const url = `${myMemoryTranslationEndpoint}?q=${encodeURIComponent(text)}&langpair=en|${encodeURIComponent(targetLanguage)}`;
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`MyMemory HTTP ${response.status}`);
+        }
+        const payload = await response.json();
+        const status = Number(payload?.responseStatus || 0);
+        if (status && status !== 200) {
+          throw new Error(`MyMemory status ${status}`);
+        }
+        const translated = normalizeSpaces(String(payload?.responseData?.translatedText || ""));
+        if (!translated) {
+          throw new Error("MyMemory: empty translation");
+        }
+        return translated;
+      }
+
+      async function translateViaGoogle(text, targetLanguage) {
+        const url = `${googleTranslationEndpoint}?client=gtx&sl=en&tl=${encodeURIComponent(targetLanguage)}&dt=t&q=${encodeURIComponent(text)}`;
+        const response = await fetch(url, { cache: "no-store" });
+        if (!response.ok) {
+          throw new Error(`Google HTTP ${response.status}`);
+        }
+        const raw = await response.text();
+        if (/google\.com\/sorry|error\s+400|<html/i.test(raw.slice(0, 300))) {
+          throw new Error("Google blocked");
+        }
+        let payload = null;
+        try {
+          payload = JSON.parse(raw);
+        } catch (error) {
+          throw new Error("Google returned non-JSON");
+        }
+        const translated = Array.isArray(payload?.[0])
+          ? payload[0].map((chunk) => chunk?.[0] || "").join("")
+          : "";
+        const clean = normalizeSpaces(translated);
+        if (!clean) {
+          throw new Error("Google: empty translation");
+        }
+        return clean;
+      }
+
       async function translateText(text, targetLanguage) {
         if (targetLanguage === "en") {
           return text;
@@ -1297,19 +1431,26 @@
         }
 
         const request = (async () => {
-          const url = `${translationEndpoint}?client=gtx&sl=en&tl=${encodeURIComponent(targetLanguage)}&dt=t&q=${encodeURIComponent(text)}`;
-          const response = await fetch(url, { cache: "no-store" });
+          const translators = [
+            { name: "Lingva", run: () => translateViaLingva(text, targetLanguage) },
+            { name: "MyMemory", run: () => translateViaMyMemory(text, targetLanguage) },
+            { name: "Google", run: () => translateViaGoogle(text, targetLanguage) }
+          ];
+          const failures = [];
 
-          if (!response.ok) {
-            throw new Error(`Translate HTTP ${response.status}`);
+          for (const translator of translators) {
+            try {
+              const translated = normalizeSpaces(await translator.run());
+              if (translated) {
+                return translated;
+              }
+            } catch (error) {
+              failures.push(`${translator.name}: ${error?.message || String(error)}`);
+            }
           }
 
-          const payload = await response.json();
-          const translated = Array.isArray(payload?.[0])
-            ? payload[0].map((chunk) => chunk?.[0] || "").join("")
-            : "";
-
-          return normalizeSpaces(translated) || text;
+          console.warn("Translation fallback exhausted:", failures.join(" | "));
+          return text;
         })();
 
         state.translationCache.set(cacheKey, request);
@@ -1317,7 +1458,7 @@
           return await request;
         } catch (error) {
           state.translationCache.delete(cacheKey);
-          throw error;
+          return text;
         }
       }
 
@@ -1481,11 +1622,12 @@
           : MAX_ARTICLE_SENTENCES;
 
         const tasks = articleProxyCandidates.map(async (proxy) => {
-          const body = await fetchText(proxy.build(sourceUrl), {
+          const rawBody = await fetchText(proxy.build(sourceUrl), {
             timeoutMs: 45000,
             retries: 2,
             label: `${proxy.name} (${new URL(sourceUrl).hostname})`
           });
+          const body = (typeof proxy.unwrap === "function" ? proxy.unwrap(rawBody) : rawBody);
           const fromHtml = extractArticleParagraphsFromHtml(body);
           const paragraphs = fromHtml.length ? fromHtml : extractArticleParagraphsFromMarkdown(body);
           if (!paragraphs.length) {
