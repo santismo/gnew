@@ -2075,6 +2075,8 @@
       }
 
       async function speakWithSpeechSynthesis(text, lang, options = {}) {
+        throw new Error("System speech synthesis is disabled. Piper mode is always on.");
+
         if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === "undefined") {
           throw new Error("Speech synthesis is unavailable");
         }
@@ -2257,21 +2259,10 @@
       }
 
       async function speakEnglishPreferred(text, options = {}) {
-        if (state.usePiperForEnglish && state.piperEnglishVoiceId) {
-          try {
-            await speakWithPiperVoice(text, state.piperEnglishVoiceId, {
-              awaitEnd: true,
-              highlightTargets: options.highlightTargets || [],
-              trackerLabel: options.trackerLabel || "English"
-            });
-            return;
-          } catch (error) {
-            console.warn("Piper English path failed; using system voice:", error);
-          }
+        if (!state.piperEnglishVoiceId) {
+          throw new Error("Piper English voice is unavailable.");
         }
-
-        await speakWithSpeechSynthesis(text, "en-US", {
-          forceMatchedVoice: true,
+        await speakWithPiperVoice(text, state.piperEnglishVoiceId, {
           awaitEnd: true,
           highlightTargets: options.highlightTargets || [],
           trackerLabel: options.trackerLabel || "English"
@@ -2279,21 +2270,10 @@
       }
 
       async function speakRussianPreferred(text, options = {}) {
-        if (state.usePiperForRussian && state.piperRussianVoiceId) {
-          try {
-            await speakWithPiperVoice(text, state.piperRussianVoiceId, {
-              awaitEnd: true,
-              highlightTargets: options.highlightTargets || [],
-              trackerLabel: options.trackerLabel || "Russian"
-            });
-            return;
-          } catch (error) {
-            console.warn("Piper Russian path failed; using system voice:", error);
-          }
+        if (!state.piperRussianVoiceId) {
+          throw new Error("Piper Russian voice is unavailable.");
         }
-
-        await speakWithSpeechSynthesis(text, "ru-RU", {
-          forceMatchedVoice: true,
+        await speakWithPiperVoice(text, state.piperRussianVoiceId, {
           awaitEnd: true,
           highlightTargets: options.highlightTargets || [],
           trackerLabel: options.trackerLabel || "Russian"
@@ -2301,7 +2281,10 @@
       }
 
       async function speakPersianPreferred(text, options = {}) {
-        await speakWithPreferredLangs(text, ["fa-IR", "fa", "prs-AF", "prs", "fa-AF"], {
+        if (!state.piperPersianVoiceId) {
+          throw new Error("Piper Farsi voice is unavailable.");
+        }
+        await speakWithPiperVoice(text, state.piperPersianVoiceId, {
           awaitEnd: true,
           highlightTargets: options.highlightTargets || [],
           trackerLabel: options.trackerLabel || "Farsi"
@@ -2316,7 +2299,6 @@
           return;
         }
 
-        await refreshVoices();
         stopAllSpeech();
 
         if (baseLang === "en") {
@@ -2335,20 +2317,6 @@
           return;
         }
 
-        if (state.isIOS) {
-          try {
-            await speakWithSpeechSynthesis(text, lang, {
-              forceMatchedVoice: false,
-              awaitEnd: true,
-              highlightTargets: options.highlightTargets || [],
-              trackerLabel: options.trackerLabel || lang.toUpperCase()
-            });
-            return;
-          } catch (error) {
-            console.warn("iOS speech fallback failed:", error);
-          }
-        }
-
         if (baseLang === "fa" || baseLang === "prs") {
           await speakPersianPreferred(text, {
             highlightTargets: options.highlightTargets || [],
@@ -2357,18 +2325,7 @@
           return;
         }
 
-        try {
-          await speakWithSpeechSynthesis(text, lang, {
-            forceMatchedVoice: true,
-            awaitEnd: true,
-            highlightTargets: options.highlightTargets || [],
-            trackerLabel: options.trackerLabel || lang.toUpperCase()
-          });
-          return;
-        } catch (error) {
-          console.warn("SpeechSynthesis failed:", error);
-        }
-        throw new Error(`No usable system voice for ${baseLang}.`);
+        throw new Error(`Piper mode supports EN/FA/RU only. Requested: ${lang}.`);
       }
 
       function getArticleRecord(headlineIndex) {
@@ -3502,15 +3459,13 @@
       function prewarmPiperInBackground() {
         const warmup = async () => {
           try {
-            const voiceIds = [state.piperPersianVoiceId];
-            if (state.usePiperForEnglish && state.piperEnglishVoiceId) {
-              voiceIds.push(state.piperEnglishVoiceId);
-            }
-            if (state.usePiperForRussian && state.piperRussianVoiceId) {
-              voiceIds.push(state.piperRussianVoiceId);
-            }
+            const voiceIds = [
+              state.piperEnglishVoiceId,
+              state.piperPersianVoiceId,
+              state.piperRussianVoiceId
+            ].filter(Boolean);
 
-            for (const voiceId of voiceIds) {
+            for (const voiceId of new Set(voiceIds)) {
               await prefetchPiperVoice(voiceId);
             }
             console.debug(`Piper prewarm complete (${voiceIds.join(", ")}).`);
