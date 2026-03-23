@@ -501,14 +501,40 @@
       const USE_PIPER_FOR_RU = true;
       const PIPER_FA_CHUNK_MAX = 260;
       const STANDARD_EBOOKS_PER_PAGE = 48;
-      const proxyCandidates = [
+      const buildCodeTabsProxy = (url) =>
+        `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(url)}`;
+      const newsProxyCandidates = [
+        {
+          name: "CodeTabs",
+          build: (url) => buildCodeTabsProxy(url)
+        },
         {
           name: "AllOrigins",
           build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
+        }
+      ];
+      const bookFetchCandidates = [
+        {
+          name: "Standard Ebooks Direct",
+          build: (url) => url
         },
         {
-          name: "Jina AI Reader",
-          build: (url) => `https://r.jina.ai/http://${url.replace(/^https?:\/\//i, "")}`
+          name: "CodeTabs",
+          build: (url) => buildCodeTabsProxy(url)
+        },
+        {
+          name: "AllOrigins",
+          build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
+        }
+      ];
+      const articleProxyCandidates = [
+        {
+          name: "CodeTabs",
+          build: (url) => buildCodeTabsProxy(url)
+        },
+        {
+          name: "AllOrigins",
+          build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
         }
       ];
 
@@ -702,6 +728,10 @@
 
       function normalizeSpaces(text) {
         return text.replace(/\s+/g, " ").trim();
+      }
+
+      function delay(ms) {
+        return new Promise((resolve) => window.setTimeout(resolve, ms));
       }
 
       function cleanHeadline(raw) {
@@ -915,8 +945,12 @@
         const safePerPage = Math.max(1, Math.floor(Number(perPage) || STANDARD_EBOOKS_PER_PAGE));
         const pageUrl = `${STANDARD_EBOOKS_LIST_URL}?page=${safePage}&per-page=${safePerPage}`;
 
-        const tasks = proxyCandidates.map(async (proxy) => {
-          const body = await fetchText(proxy.build(pageUrl), { timeoutMs: 26000, retries: 1 });
+        const tasks = bookFetchCandidates.map(async (proxy) => {
+          const body = await fetchText(proxy.build(pageUrl), {
+            timeoutMs: 32000,
+            retries: 2,
+            label: `${proxy.name} (${new URL(pageUrl).hostname})`
+          });
           const fromHtml = extractStandardEbooksFromHtml(body);
           const books = fromHtml.length ? fromHtml : extractStandardEbooksFromMarkdown(body);
           if (!books.length) {
@@ -1161,6 +1195,7 @@
       async function fetchText(url, options = {}) {
         const timeoutMs = Number.isFinite(options.timeoutMs) ? options.timeoutMs : 20000;
         const retries = Number.isFinite(options.retries) ? options.retries : 1;
+        const label = normalizeSpaces(String(options.label || ""));
 
         let lastError = null;
         for (let attempt = 0; attempt <= retries; attempt += 1) {
@@ -1180,8 +1215,19 @@
             return response.text();
           } catch (error) {
             lastError = error;
+            const message = String(error?.message || error || "");
             const isAbort = error?.name === "AbortError" || /aborted/i.test(error?.message || "");
-            if (!isAbort || attempt >= retries) {
+            const isNetworkish =
+              /failed to fetch|load failed|networkerror|network request failed/i.test(message)
+              || /HTTP 429|HTTP 5\d\d/.test(message)
+              || isAbort;
+
+            if (attempt < retries && isNetworkish) {
+              await delay(Math.min(1800, 300 * (attempt + 1)));
+              continue;
+            }
+
+            if (attempt >= retries) {
               break;
             }
           } finally {
@@ -1190,14 +1236,22 @@
         }
 
         if (lastError?.name === "AbortError" || /aborted/i.test(lastError?.message || "")) {
-          throw new Error("Request timed out");
+          throw new Error(`${label || "Request"} timed out`);
         }
-        throw lastError || new Error("Request failed");
+        const lastMessage = String(lastError?.message || lastError || "Request failed");
+        if (/failed to fetch|load failed|networkerror|network request failed/i.test(lastMessage)) {
+          throw new Error(`${label || "Request"} network/CORS blocked`);
+        }
+        throw new Error(label ? `${label}: ${lastMessage}` : lastMessage);
       }
 
       async function fetchHeadlines(sourceUrl, maxItems) {
-        const tasks = proxyCandidates.map(async (proxy) => {
-          const body = await fetchText(proxy.build(sourceUrl), { timeoutMs: 20000, retries: 1 });
+        const tasks = newsProxyCandidates.map(async (proxy) => {
+          const body = await fetchText(proxy.build(sourceUrl), {
+            timeoutMs: 32000,
+            retries: 2,
+            label: `${proxy.name} (${new URL(sourceUrl).hostname})`
+          });
           const fromHtml = extractHeadlinesFromHtml(body, maxItems);
           const headlines = fromHtml.length ? fromHtml : extractHeadlinesFromMarkdown(body, maxItems);
 
@@ -1426,22 +1480,14 @@
           ? Math.max(1, Math.floor(options.maxSentences))
           : MAX_ARTICLE_SENTENCES;
 
-        const articleProxyCandidates = [
-          {
-            name: "Jina AI Reader",
-            build: (url) => `https://r.jina.ai/http://${url.replace(/^https?:\/\//i, "")}`,
-            parse: extractArticleParagraphsFromMarkdown
-          },
-          {
-            name: "AllOrigins",
-            build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-            parse: extractArticleParagraphsFromHtml
-          }
-        ];
-
         const tasks = articleProxyCandidates.map(async (proxy) => {
-          const body = await fetchText(proxy.build(sourceUrl), { timeoutMs: 45000, retries: 1 });
-          const paragraphs = proxy.parse(body);
+          const body = await fetchText(proxy.build(sourceUrl), {
+            timeoutMs: 45000,
+            retries: 2,
+            label: `${proxy.name} (${new URL(sourceUrl).hostname})`
+          });
+          const fromHtml = extractArticleParagraphsFromHtml(body);
+          const paragraphs = fromHtml.length ? fromHtml : extractArticleParagraphsFromMarkdown(body);
           if (!paragraphs.length) {
             throw new Error(`${proxy.name}: no article paragraphs`);
           }
