@@ -628,6 +628,8 @@
         audioPlaybackToken: 0,
         sharedPlaybackAudio: null,
         audioUnlocked: false,
+        unlockAudioContext: null,
+        audioUnlockBound: false,
         activeUtterance: null,
         contentMode: "news",
         voices: [],
@@ -1830,12 +1832,43 @@
           return;
         }
 
+        const unlockErrors = [];
+
+        const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+        if (AudioContextCtor) {
+          try {
+            if (!state.unlockAudioContext) {
+              state.unlockAudioContext = new AudioContextCtor();
+            }
+
+            if (state.unlockAudioContext.state === "suspended") {
+              await state.unlockAudioContext.resume();
+            }
+
+            // Push a near-silent buffer through the output to satisfy iOS gesture gating.
+            const sampleRate = state.unlockAudioContext.sampleRate || 22050;
+            const buffer = state.unlockAudioContext.createBuffer(1, Math.max(1, Math.floor(sampleRate * 0.03)), sampleRate);
+            const source = state.unlockAudioContext.createBufferSource();
+            source.buffer = buffer;
+            const gainNode = state.unlockAudioContext.createGain();
+            gainNode.gain.value = 0.0001;
+            source.connect(gainNode);
+            gainNode.connect(state.unlockAudioContext.destination);
+            source.start(0);
+            state.audioUnlocked = true;
+            return;
+          } catch (error) {
+            unlockErrors.push(error);
+          }
+        }
+
         const audio = getPlaybackAudio();
         const originalMuted = audio.muted;
         const originalVolume = audio.volume;
+        const originalSrc = audio.src;
 
         try {
-          // Tiny silent wav used to satisfy iOS Safari user-gesture audio gating.
+          // Fallback unlock path for browsers that gate MediaElement playback.
           audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YQAAAAA=";
           audio.muted = true;
           audio.volume = 0;
@@ -1843,13 +1876,50 @@
           audio.pause();
           audio.currentTime = 0;
           state.audioUnlocked = true;
+          return;
         } catch (error) {
-          throw new Error("Audio is blocked by Safari on iPhone. Tap the button again.");
+          unlockErrors.push(error);
         } finally {
-          audio.src = "";
+          audio.src = originalSrc || "";
           audio.muted = originalMuted;
           audio.volume = originalVolume;
         }
+
+        const lastError = unlockErrors[unlockErrors.length - 1];
+        if (isUserAgentPermissionError(lastError)) {
+          throw new Error("Audio is blocked on iPhone in this context. Tap a Speak/Read button once more.");
+        }
+        throw new Error(`Audio init failed: ${lastError?.message || "Unknown audio error."}`);
+      }
+
+      function bindFirstGestureAudioUnlock() {
+        if (!state.isIOS || state.audioUnlockBound) {
+          return;
+        }
+        state.audioUnlockBound = true;
+
+        const onGesture = () => {
+          ensureAudioUnlockedFromGesture()
+            .catch(() => {})
+            .finally(() => {
+              if (!state.audioUnlocked) {
+                return;
+              }
+              const options = { capture: true };
+              document.removeEventListener("touchstart", onGesture, options);
+              document.removeEventListener("pointerdown", onGesture, options);
+              document.removeEventListener("mousedown", onGesture, options);
+              document.removeEventListener("click", onGesture, options);
+              document.removeEventListener("keydown", onGesture, options);
+            });
+        };
+
+        const options = { capture: true, passive: true };
+        document.addEventListener("touchstart", onGesture, options);
+        document.addEventListener("pointerdown", onGesture, options);
+        document.addEventListener("mousedown", onGesture, options);
+        document.addEventListener("click", onGesture, options);
+        document.addEventListener("keydown", onGesture, { capture: true });
       }
 
       function stopAudioPlayback() {
@@ -2004,18 +2074,33 @@
             trackerLabel
           );
 
-          audio.play().catch((error) => {
-            if (wasCanceled()) {
-              clearSpeechVisuals();
-              finish(resolve);
-              return;
-            }
-            if (isUserAgentPermissionError(error)) {
-              finish(reject, new Error("Audio playback blocked by iPhone Safari. Tap Read All Headlines again."));
-              return;
-            }
-            finish(reject, error);
-          });
+          const attemptPlay = (attempt = 0) => {
+            audio.play().catch((error) => {
+              if (wasCanceled()) {
+                clearSpeechVisuals();
+                finish(resolve);
+                return;
+              }
+              if (isUserAgentPermissionError(error) && attempt < 1) {
+                window.setTimeout(() => {
+                  if (wasCanceled()) {
+                    clearSpeechVisuals();
+                    finish(resolve);
+                    return;
+                  }
+                  attemptPlay(attempt + 1);
+                }, 40);
+                return;
+              }
+              if (isUserAgentPermissionError(error)) {
+                finish(reject, new Error("Audio playback blocked on iPhone. Tap the button again."));
+                return;
+              }
+              finish(reject, error);
+            });
+          };
+
+          attemptPlay(0);
 
           if (wasCanceled()) {
             audio.pause();
@@ -3743,6 +3828,7 @@
       }
 
       prewarmPiperInBackground();
+      bindFirstGestureAudioUnlock();
       updateLoadNewButtonLabel();
       updateBookTitleSelect([]);
       updatePlaybackButtons();
