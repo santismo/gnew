@@ -626,6 +626,8 @@
         activeAudio: null,
         activeAudioObjectUrl: "",
         audioPlaybackToken: 0,
+        sharedPlaybackAudio: null,
+        audioUnlocked: false,
         activeUtterance: null,
         contentMode: "news",
         voices: [],
@@ -1801,13 +1803,68 @@
         clearNowSpeaking();
       }
 
+      function getPlaybackAudio() {
+        if (state.sharedPlaybackAudio) {
+          return state.sharedPlaybackAudio;
+        }
+        const audio = new Audio();
+        audio.preload = "auto";
+        audio.playsInline = true;
+        state.sharedPlaybackAudio = audio;
+        return audio;
+      }
+
+      function isUserAgentPermissionError(error) {
+        const text = String(error?.message || error || "").toLowerCase();
+        return (
+          error?.name === "NotAllowedError" ||
+          text.includes("request is not allowed by the user agent") ||
+          text.includes("notallowederror") ||
+          text.includes("platform in the current context") ||
+          text.includes("user denied permission")
+        );
+      }
+
+      async function ensureAudioUnlockedFromGesture() {
+        if (state.audioUnlocked) {
+          return;
+        }
+
+        const audio = getPlaybackAudio();
+        const originalMuted = audio.muted;
+        const originalVolume = audio.volume;
+
+        try {
+          // Tiny silent wav used to satisfy iOS Safari user-gesture audio gating.
+          audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YQAAAAA=";
+          audio.muted = true;
+          audio.volume = 0;
+          await audio.play();
+          audio.pause();
+          audio.currentTime = 0;
+          state.audioUnlocked = true;
+        } catch (error) {
+          throw new Error("Audio is blocked by Safari on iPhone. Tap the button again.");
+        } finally {
+          audio.src = "";
+          audio.muted = originalMuted;
+          audio.volume = originalVolume;
+        }
+      }
+
       function stopAudioPlayback() {
         state.audioPlaybackToken += 1;
-        if (state.activeAudio) {
-          state.activeAudio.pause();
-          state.activeAudio.currentTime = 0;
-          state.activeAudio.src = "";
-          state.activeAudio = null;
+        const audio = state.activeAudio || state.sharedPlaybackAudio;
+        if (audio) {
+          audio.pause();
+          audio.currentTime = 0;
+          audio.src = "";
+          audio.onended = null;
+          audio.onabort = null;
+          audio.onerror = null;
+          if (state.activeAudio === audio) {
+            state.activeAudio = null;
+          }
         }
         if (state.activeAudioObjectUrl) {
           URL.revokeObjectURL(state.activeAudioObjectUrl);
@@ -1896,11 +1953,12 @@
         const playbackToken = state.audioPlaybackToken;
 
         return new Promise((resolve, reject) => {
-          const audio = new Audio();
+          const audio = getPlaybackAudio();
           state.activeAudio = audio;
           state.activeAudioObjectUrl = objectUrl;
           audio.src = objectUrl;
           audio.preload = "auto";
+          audio.playsInline = true;
           const wasCanceled = () => playbackToken !== state.audioPlaybackToken;
 
           const finish = (cb, value) => {
@@ -1950,6 +2008,10 @@
             if (wasCanceled()) {
               clearSpeechVisuals();
               finish(resolve);
+              return;
+            }
+            if (isUserAgentPermissionError(error)) {
+              finish(reject, new Error("Audio playback blocked by iPhone Safari. Tap Read All Headlines again."));
               return;
             }
             finish(reject, error);
@@ -3453,6 +3515,7 @@
               if (!record.loaded) {
                 await loadArticleTranslations(headlineIndex);
               }
+              await ensureAudioUnlockedFromGesture();
               setArticleStatus(headlineIndex, "Playing all sentences EN → FA → RU...");
               await playAllSentences(headlineIndex);
               setArticleStatus(headlineIndex, `Stopped at sentence ${record.currentSentenceIndex + 1}.`);
@@ -3499,6 +3562,7 @@
                 await loadArticleTranslations(headlineIndex);
               }
               const indexToPlay = Number.isFinite(sentenceIndex) ? sentenceIndex : record.currentSentenceIndex;
+              await ensureAudioUnlockedFromGesture();
               stopArticlePlayback();
               setArticleStatus(headlineIndex, `Playing sentence ${indexToPlay + 1} EN → FA → RU...`);
               await speakSentenceTrio(headlineIndex, indexToPlay);
@@ -3512,6 +3576,7 @@
               }
               const indexToPlay = Number.isFinite(sentenceIndex) ? sentenceIndex : record.currentSentenceIndex;
               const langLabel = sentenceLang ? sentenceLang.toUpperCase() : "EN";
+              await ensureAudioUnlockedFromGesture();
               stopArticlePlayback();
               setArticleStatus(headlineIndex, `Playing sentence ${indexToPlay + 1} ${langLabel}...`);
               await speakSentenceLanguage(headlineIndex, indexToPlay, sentenceLang || "en");
@@ -3546,6 +3611,7 @@
         }
 
         try {
+          await ensureAudioUnlockedFromGesture();
           stopArticlePlayback();
           state.currentSpeakKey = speakKey;
           await speakText(text, lang, {
@@ -3577,6 +3643,7 @@
 
       readAllHeadlinesBtn.addEventListener("click", async () => {
         try {
+          await ensureAudioUnlockedFromGesture();
           await playAllHeadlines();
         } catch (error) {
           setStatus(`Read Headlines failed: ${error.message}`, "error");
@@ -3585,6 +3652,7 @@
 
       playAllArticlesBtn.addEventListener("click", async () => {
         try {
+          await ensureAudioUnlockedFromGesture();
           await playAllArticles();
         } catch (error) {
           setStatus(`Play All failed: ${error.message}`, "error");
